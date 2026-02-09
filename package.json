@@ -1,0 +1,50 @@
+{
+  "name": "claude-desktop-mcp-bridge",
+  "version": "0.1.0",
+  "description": "MCP bridge to bring Claude Code capabilities to Claude Desktop",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "start:filesystem": "node dist/filesystem-bridge/server.js",
+    "start:shell": "node dist/shell-bridge/server.js",
+    "start:skills": "node dist/skills-bridge/server.js",
+    "start:all": "concurrently \"npm:start:filesystem\" \"npm:start:shell\" \"npm:start:skills\""
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "ai",
+    "desktop",
+    "bridge",
+    "anthropic",
+    "development"
+  ],
+  "author": "rblake2320",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rblake2320/claude-desktop-mcp-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rblake2320/claude-desktop-mcp-bridge/issues"
+  },
+  "homepage": "https://github.com/rblake2320/claude-desktop-mcp-bridge#readme",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "typescript": "^5.0.0",
+    "concurrently": "^8.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "zod": "^3.22.0",
+    "glob": "^10.0.0",
+    "winston": "^3.11.0"
+  }
+}

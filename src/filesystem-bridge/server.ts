@@ -7,19 +7,40 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { readFile, writeFile, access } from 'fs/promises';
+import { readFile, writeFile, mkdir, access } from 'fs/promises';
 import { glob } from 'glob';
-import { dirname, resolve, relative } from 'path';
+import { dirname, resolve, relative, sep, posix } from 'path';
 import { z } from 'zod';
+import { platform } from 'os';
 
-// Configuration schema
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Normalise a path for cross-platform comparison (lowercase + forward slashes on Windows). */
+function normalisePath(p: string): string {
+  const resolved = resolve(p);
+  if (platform() === 'win32') {
+    return resolved.replace(/\\/g, '/').toLowerCase();
+  }
+  return resolved;
+}
+
+/** Extract a human-readable message from an unknown thrown value. */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+// ── Configuration ────────────────────────────────────────────────────────────
+
 const ConfigSchema = z.object({
   allowedPaths: z.array(z.string()).default([process.cwd()]),
-  maxFileSize: z.number().default(10 * 1024 * 1024), // 10MB
+  maxFileSize: z.number().default(10 * 1024 * 1024), // 10 MB
   readOnly: z.boolean().default(false),
 });
 
 type Config = z.infer<typeof ConfigSchema>;
+
+// ── Filesystem Bridge ────────────────────────────────────────────────────────
 
 class FilesystemBridge {
   private config: Config;
@@ -28,20 +49,17 @@ class FilesystemBridge {
     this.config = ConfigSchema.parse(config);
   }
 
-  /**
-   * Check if a path is within allowed paths
-   */
+  /** Check if a path is within allowed paths (cross-platform safe). */
   private isPathAllowed(filePath: string): boolean {
-    const resolvedPath = resolve(filePath);
-    return this.config.allowedPaths.some(allowedPath => {
-      const resolvedAllowed = resolve(allowedPath);
-      return resolvedPath.startsWith(resolvedAllowed);
+    const normTarget = normalisePath(filePath);
+    return this.config.allowedPaths.some(allowed => {
+      const normAllowed = normalisePath(allowed);
+      // Ensure we match on directory boundaries
+      return normTarget === normAllowed || normTarget.startsWith(normAllowed + '/');
     });
   }
 
-  /**
-   * Read file contents with line numbers (like Claude Code's Read tool)
-   */
+  /** Read file contents with line numbers (like Claude Code's Read tool). */
   async readFile(filePath: string, offset?: number, limit?: number): Promise<string> {
     if (!this.isPathAllowed(filePath)) {
       throw new Error(`Access denied: ${filePath} is not in allowed paths`);
@@ -50,131 +68,117 @@ class FilesystemBridge {
     try {
       const content = await readFile(filePath, 'utf-8');
       const lines = content.split('\n');
-
       const startLine = offset || 0;
       const endLine = limit ? startLine + limit : lines.length;
 
       return lines
         .slice(startLine, endLine)
-        .map((line, index) => `${startLine + index + 1}→${line}`)
+        .map((line, index) => `${startLine + index + 1}\u2192${line}`)
         .join('\n');
-    } catch (error) {
-      throw new Error(`Failed to read file ${filePath}: ${error.message}`);
+    } catch (err) {
+      throw new Error(`Failed to read file ${filePath}: ${errorMessage(err)}`);
     }
   }
 
-  /**
-   * Write file contents (like Claude Code's Write tool)
-   */
+  /** Write file contents, creating parent directories as needed. */
   async writeFile(filePath: string, content: string): Promise<string> {
     if (this.config.readOnly) {
       throw new Error('Write operations are disabled in read-only mode');
     }
-
     if (!this.isPathAllowed(filePath)) {
       throw new Error(`Access denied: ${filePath} is not in allowed paths`);
     }
-
     if (content.length > this.config.maxFileSize) {
       throw new Error(`File size exceeds maximum allowed size of ${this.config.maxFileSize} bytes`);
     }
 
     try {
-      // Ensure directory exists
-      const dir = dirname(filePath);
-      await access(dir).catch(async () => {
-        throw new Error(`Directory ${dir} does not exist`);
-      });
+      // Bug fix #3: recursively create parent directories
+      const dir = dirname(resolve(filePath));
+      await mkdir(dir, { recursive: true });
 
       await writeFile(filePath, content, 'utf-8');
       return `File written successfully: ${filePath}`;
-    } catch (error) {
-      throw new Error(`Failed to write file ${filePath}: ${error.message}`);
+    } catch (err) {
+      throw new Error(`Failed to write file ${filePath}: ${errorMessage(err)}`);
     }
   }
 
-  /**
-   * Edit file with exact string replacement (like Claude Code's Edit tool)
-   */
-  async editFile(filePath: string, oldString: string, newString: string, replaceAll = false): Promise<string> {
+  /** Edit file with exact string replacement. */
+  async editFile(
+    filePath: string,
+    oldString: string,
+    newString: string,
+    replaceAll = false,
+  ): Promise<string> {
     if (this.config.readOnly) {
       throw new Error('Edit operations are disabled in read-only mode');
     }
-
     if (!this.isPathAllowed(filePath)) {
       throw new Error(`Access denied: ${filePath} is not in allowed paths`);
     }
 
     try {
       const content = await readFile(filePath, 'utf-8');
-
       let newContent: string;
+
       if (replaceAll) {
         newContent = content.replaceAll(oldString, newString);
       } else {
-        // Check if oldString is unique
         const occurrences = content.split(oldString).length - 1;
         if (occurrences === 0) {
           throw new Error(`String not found: ${oldString}`);
         }
         if (occurrences > 1) {
-          throw new Error(`String is not unique (found ${occurrences} occurrences). Use replaceAll=true or provide more context.`);
+          throw new Error(
+            `String is not unique (found ${occurrences} occurrences). Use replaceAll=true or provide more context.`,
+          );
         }
         newContent = content.replace(oldString, newString);
       }
 
       await writeFile(filePath, newContent, 'utf-8');
       return `File edited successfully: ${filePath}`;
-    } catch (error) {
-      throw new Error(`Failed to edit file ${filePath}: ${error.message}`);
+    } catch (err) {
+      throw new Error(`Failed to edit file ${filePath}: ${errorMessage(err)}`);
     }
   }
 
-  /**
-   * Find files by pattern (like Claude Code's Glob tool)
-   */
+  /** Find files by glob pattern. */
   async globSearch(pattern: string, basePath?: string): Promise<string[]> {
-    const searchPath = basePath && this.isPathAllowed(basePath) ? basePath : this.config.allowedPaths[0];
+    const searchPath =
+      basePath && this.isPathAllowed(basePath) ? basePath : this.config.allowedPaths[0];
 
     try {
       const files = await glob(pattern, {
         cwd: searchPath,
         absolute: true,
-        follow: false, // Don't follow symlinks for security
+        follow: false, // security: don't follow symlinks
       });
 
-      // Filter out files not in allowed paths
       const allowedFiles = files.filter(file => this.isPathAllowed(file));
-
-      // Return relative paths for easier reading
       return allowedFiles.map(file => relative(searchPath, file));
-    } catch (error) {
-      throw new Error(`Failed to search for pattern ${pattern}: ${error.message}`);
+    } catch (err) {
+      throw new Error(`Failed to search for pattern ${pattern}: ${errorMessage(err)}`);
     }
   }
 }
 
-// Initialize the filesystem bridge
+// ── Initialise ───────────────────────────────────────────────────────────────
+
 const filesystem = new FilesystemBridge({
   allowedPaths: process.env.ALLOWED_PATHS?.split(',') || [process.cwd()],
   readOnly: process.env.READ_ONLY === 'true',
-  maxFileSize: process.env.MAX_FILE_SIZE ? parseInt(process.env.MAX_FILE_SIZE) : undefined,
+  maxFileSize: process.env.MAX_FILE_SIZE ? parseInt(process.env.MAX_FILE_SIZE, 10) : undefined,
 });
 
-// Create MCP server
 const server = new Server(
-  {
-    name: 'filesystem-bridge',
-    version: '0.1.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
+  { name: 'filesystem-bridge', version: '0.2.0' },
+  { capabilities: { tools: {} } },
 );
 
-// Define tools
+// ── Tool definitions ─────────────────────────────────────────────────────────
+
 const tools: Tool[] = [
   {
     name: 'read_file',
@@ -182,36 +186,21 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        filePath: {
-          type: 'string',
-          description: 'Path to the file to read',
-        },
-        offset: {
-          type: 'number',
-          description: 'Line offset to start reading from (0-based)',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of lines to read',
-        },
+        filePath: { type: 'string', description: 'Path to the file to read' },
+        offset: { type: 'number', description: 'Line offset to start reading from (0-based)' },
+        limit: { type: 'number', description: 'Maximum number of lines to read' },
       },
       required: ['filePath'],
     },
   },
   {
     name: 'write_file',
-    description: 'Write content to a file (like Claude Code Write tool)',
+    description: 'Write content to a file, creating parent directories as needed',
     inputSchema: {
       type: 'object',
       properties: {
-        filePath: {
-          type: 'string',
-          description: 'Path to the file to write',
-        },
-        content: {
-          type: 'string',
-          description: 'Content to write to the file',
-        },
+        filePath: { type: 'string', description: 'Path to the file to write' },
+        content: { type: 'string', description: 'Content to write to the file' },
       },
       required: ['filePath', 'content'],
     },
@@ -222,23 +211,10 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        filePath: {
-          type: 'string',
-          description: 'Path to the file to edit',
-        },
-        oldString: {
-          type: 'string',
-          description: 'String to replace',
-        },
-        newString: {
-          type: 'string',
-          description: 'String to replace with',
-        },
-        replaceAll: {
-          type: 'boolean',
-          description: 'Whether to replace all occurrences',
-          default: false,
-        },
+        filePath: { type: 'string', description: 'Path to the file to edit' },
+        oldString: { type: 'string', description: 'String to replace' },
+        newString: { type: 'string', description: 'String to replace with' },
+        replaceAll: { type: 'boolean', description: 'Whether to replace all occurrences', default: false },
       },
       required: ['filePath', 'oldString', 'newString'],
     },
@@ -249,24 +225,17 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        pattern: {
-          type: 'string',
-          description: 'Glob pattern to search for (e.g., "**/*.ts", "src/**/*.js")',
-        },
-        basePath: {
-          type: 'string',
-          description: 'Base path to search from (optional)',
-        },
+        pattern: { type: 'string', description: 'Glob pattern (e.g., "**/*.ts")' },
+        basePath: { type: 'string', description: 'Base path to search from (optional)' },
       },
       required: ['pattern'],
     },
   },
 ];
 
-// Register tool handlers
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools };
-});
+// ── Handlers ─────────────────────────────────────────────────────────────────
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -274,81 +243,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'read_file': {
-        const { filePath, offset, limit } = args as any;
+        const { filePath, offset, limit } = args as { filePath: string; offset?: number; limit?: number };
         const result = await filesystem.readFile(filePath, offset, limit);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result,
-            },
-          ],
-        };
+        return { content: [{ type: 'text', text: result }] };
       }
 
       case 'write_file': {
-        const { filePath, content } = args as any;
+        const { filePath, content } = args as { filePath: string; content: string };
         const result = await filesystem.writeFile(filePath, content);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result,
-            },
-          ],
-        };
+        return { content: [{ type: 'text', text: result }] };
       }
 
       case 'edit_file': {
-        const { filePath, oldString, newString, replaceAll } = args as any;
-        const result = await filesystem.editFile(filePath, oldString, newString, replaceAll);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result,
-            },
-          ],
+        const { filePath, oldString, newString, replaceAll } = args as {
+          filePath: string; oldString: string; newString: string; replaceAll?: boolean;
         };
+        const result = await filesystem.editFile(filePath, oldString, newString, replaceAll);
+        return { content: [{ type: 'text', text: result }] };
       }
 
       case 'glob_search': {
-        const { pattern, basePath } = args as any;
+        const { pattern, basePath } = args as { pattern: string; basePath?: string };
         const files = await filesystem.globSearch(pattern, basePath);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: files.length > 0 ? files.join('\n') : 'No files found',
-            },
-          ],
-        };
+        return { content: [{ type: 'text', text: files.length > 0 ? files.join('\n') : 'No files found' }] };
       }
 
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-  } catch (error) {
+  } catch (err) {
     return {
-      content: [
-        {
-          type: 'text',
-          text: `Error: ${error.message}`,
-        },
-      ],
+      content: [{ type: 'text', text: `Error: ${errorMessage(err)}` }],
       isError: true,
     };
   }
 });
 
-// Start the server
+// ── Start ────────────────────────────────────────────────────────────────────
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('Filesystem bridge MCP server running on stdio');
 }
 
-main().catch((error) => {
-  console.error('Server failed to start:', error);
+main().catch((err) => {
+  console.error('Server failed to start:', err);
   process.exit(1);
 });

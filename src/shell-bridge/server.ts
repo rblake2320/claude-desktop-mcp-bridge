@@ -13,16 +13,30 @@ import { z } from 'zod';
 
 const execAsync = promisify(exec);
 
-// Configuration schema
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Extract a human-readable message from an unknown thrown value. */
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+// ── Configuration ────────────────────────────────────────────────────────────
+
 const ConfigSchema = z.object({
-  timeout: z.number().default(120000), // 2 minutes default
-  maxOutputSize: z.number().default(30000), // 30k characters like Claude Code
-  allowedCommands: z.array(z.string()).optional(), // Whitelist of allowed commands
-  blockedCommands: z.array(z.string()).default(['rm', 'rmdir', 'del', 'format', 'fdisk']), // Dangerous commands
+  timeout: z.number().default(120_000), // 2 minutes
+  maxOutputSize: z.number().default(30_000), // 30k chars (matches Claude Code)
+  allowedCommands: z.array(z.string()).optional(),
+  blockedCommands: z.array(z.string()).default([
+    'rm', 'rmdir', 'del', 'format', 'fdisk', 'mkfs',
+    'dd', 'shutdown', 'reboot', 'halt', 'poweroff',
+  ]),
   workingDirectory: z.string().default(process.cwd()),
 });
 
 type Config = z.infer<typeof ConfigSchema>;
+
+// ── Shell Bridge ─────────────────────────────────────────────────────────────
 
 class ShellBridge {
   private config: Config;
@@ -31,18 +45,12 @@ class ShellBridge {
     this.config = ConfigSchema.parse(config);
   }
 
-  /**
-   * Check if a command is allowed to run
-   */
+  /** Check if a command is allowed to run. */
   private isCommandAllowed(command: string): boolean {
-    const cmd = command.trim().split(' ')[0].toLowerCase();
+    const cmd = command.trim().split(/\s+/)[0].toLowerCase();
 
-    // Check if command is explicitly blocked
-    if (this.config.blockedCommands.includes(cmd)) {
-      return false;
-    }
+    if (this.config.blockedCommands.includes(cmd)) return false;
 
-    // If whitelist is defined, command must be in it
     if (this.config.allowedCommands && this.config.allowedCommands.length > 0) {
       return this.config.allowedCommands.includes(cmd);
     }
@@ -50,31 +58,26 @@ class ShellBridge {
     return true;
   }
 
-  /**
-   * Truncate output if it exceeds maximum size
-   */
+  /** Truncate output if it exceeds maximum size. */
   private truncateOutput(output: string): string {
-    if (output.length <= this.config.maxOutputSize) {
-      return output;
-    }
-
-    const truncated = output.substring(0, this.config.maxOutputSize);
-    return `${truncated}\n\n... (output truncated, exceeded ${this.config.maxOutputSize} characters)`;
+    if (output.length <= this.config.maxOutputSize) return output;
+    return `${output.substring(0, this.config.maxOutputSize)}\n\n... (output truncated, exceeded ${this.config.maxOutputSize} characters)`;
   }
 
-  /**
-   * Execute a command (like Claude Code's Bash tool)
-   */
-  async runCommand(command: string, description?: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  /** Execute a command (like Claude Code's Bash tool). */
+  async runCommand(
+    command: string,
+    _description?: string,
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     if (!this.isCommandAllowed(command)) {
-      throw new Error(`Command not allowed: ${command.split(' ')[0]}`);
+      throw new Error(`Command not allowed: ${command.split(/\s+/)[0]}`);
     }
 
     try {
       const { stdout, stderr } = await execAsync(command, {
         timeout: this.config.timeout,
         cwd: this.config.workingDirectory,
-        maxBuffer: this.config.maxOutputSize,
+        maxBuffer: this.config.maxOutputSize * 2, // allow buffer headroom
       });
 
       return {
@@ -82,29 +85,32 @@ class ShellBridge {
         stderr: this.truncateOutput(stderr || ''),
         exitCode: 0,
       };
-    } catch (error: any) {
-      // Handle timeout and other execution errors
-      const stdout = this.truncateOutput(error.stdout || '');
-      const stderr = this.truncateOutput(error.stderr || error.message || '');
-      const exitCode = error.code || 1;
+    } catch (err: unknown) {
+      // exec errors carry stdout/stderr/code on the error object
+      const execErr = err as {
+        stdout?: string; stderr?: string; message?: string;
+        code?: number; signal?: string; killed?: boolean;
+      };
 
-      if (error.signal === 'SIGTERM' && error.killed) {
+      if (execErr.signal === 'SIGTERM' && execErr.killed) {
         throw new Error(`Command timed out after ${this.config.timeout}ms: ${command}`);
       }
 
-      return { stdout, stderr, exitCode };
+      return {
+        stdout: this.truncateOutput(execErr.stdout || ''),
+        stderr: this.truncateOutput(execErr.stderr || execErr.message || ''),
+        exitCode: typeof execErr.code === 'number' ? execErr.code : 1,
+      };
     }
   }
 
-  /**
-   * Start a background process (like Claude Code's run_in_background)
-   */
+  /** Start a background process. */
   async runBackground(command: string): Promise<{ taskId: string; message: string }> {
     if (!this.isCommandAllowed(command)) {
-      throw new Error(`Command not allowed: ${command.split(' ')[0]}`);
+      throw new Error(`Command not allowed: ${command.split(/\s+/)[0]}`);
     }
 
-    const taskId = `bg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const taskId = `bg_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 
     try {
       const child = spawn(command, {
@@ -113,61 +119,47 @@ class ShellBridge {
         detached: true,
         stdio: 'ignore',
       });
-
-      // Don't wait for the process
       child.unref();
 
       return {
         taskId,
         message: `Background task started with ID: ${taskId}. PID: ${child.pid}`,
       };
-    } catch (error) {
-      throw new Error(`Failed to start background task: ${error.message}`);
+    } catch (err) {
+      throw new Error(`Failed to start background task: ${errorMessage(err)}`);
     }
   }
 
-  /**
-   * Get current working directory
-   */
   getCurrentDirectory(): string {
     return process.cwd();
   }
 
-  /**
-   * Change working directory
-   */
   changeDirectory(path: string): string {
     try {
       process.chdir(path);
       this.config.workingDirectory = process.cwd();
       return `Changed directory to: ${this.config.workingDirectory}`;
-    } catch (error) {
-      throw new Error(`Failed to change directory to ${path}: ${error.message}`);
+    } catch (err) {
+      throw new Error(`Failed to change directory to ${path}: ${errorMessage(err)}`);
     }
   }
 }
 
-// Initialize the shell bridge
+// ── Initialise ───────────────────────────────────────────────────────────────
+
 const shell = new ShellBridge({
-  timeout: process.env.TIMEOUT ? parseInt(process.env.TIMEOUT) : undefined,
+  timeout: process.env.TIMEOUT ? parseInt(process.env.TIMEOUT, 10) : undefined,
   allowedCommands: process.env.ALLOWED_COMMANDS?.split(','),
   blockedCommands: process.env.BLOCKED_COMMANDS?.split(','),
 });
 
-// Create MCP server
 const server = new Server(
-  {
-    name: 'shell-bridge',
-    version: '0.1.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
+  { name: 'shell-bridge', version: '0.2.0' },
+  { capabilities: { tools: {} } },
 );
 
-// Define tools
+// ── Tool definitions ─────────────────────────────────────────────────────────
+
 const tools: Tool[] = [
   {
     name: 'run_command',
@@ -175,14 +167,8 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        command: {
-          type: 'string',
-          description: 'The command to execute',
-        },
-        description: {
-          type: 'string',
-          description: 'Optional description of what the command does',
-        },
+        command: { type: 'string', description: 'The command to execute' },
+        description: { type: 'string', description: 'Optional description of what the command does' },
       },
       required: ['command'],
     },
@@ -193,10 +179,7 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        command: {
-          type: 'string',
-          description: 'The command to run in background',
-        },
+        command: { type: 'string', description: 'The command to run in background' },
       },
       required: ['command'],
     },
@@ -204,10 +187,7 @@ const tools: Tool[] = [
   {
     name: 'get_current_directory',
     description: 'Get the current working directory',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'change_directory',
@@ -215,20 +195,16 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        path: {
-          type: 'string',
-          description: 'Path to change to',
-        },
+        path: { type: 'string', description: 'Path to change to' },
       },
       required: ['path'],
     },
   },
 ];
 
-// Register tool handlers
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools };
-});
+// ── Handlers ─────────────────────────────────────────────────────────────────
+
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -236,7 +212,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'run_command': {
-        const { command, description } = args as any;
+        const { command, description } = args as { command: string; description?: string };
         const result = await shell.runCommand(command, description);
 
         let output = '';
@@ -245,78 +221,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         output += `Exit Code: ${result.exitCode}`;
 
         return {
-          content: [
-            {
-              type: 'text',
-              text: output,
-            },
-          ],
+          content: [{ type: 'text', text: output }],
           isError: result.exitCode !== 0,
         };
       }
 
       case 'run_background': {
-        const { command } = args as any;
+        const { command } = args as { command: string };
         const result = await shell.runBackground(command);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result.message,
-            },
-          ],
-        };
+        return { content: [{ type: 'text', text: result.message }] };
       }
 
       case 'get_current_directory': {
-        const cwd = shell.getCurrentDirectory();
-        return {
-          content: [
-            {
-              type: 'text',
-              text: cwd,
-            },
-          ],
-        };
+        return { content: [{ type: 'text', text: shell.getCurrentDirectory() }] };
       }
 
       case 'change_directory': {
-        const { path } = args as any;
+        const { path } = args as { path: string };
         const result = shell.changeDirectory(path);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: result,
-            },
-          ],
-        };
+        return { content: [{ type: 'text', text: result }] };
       }
 
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
-  } catch (error) {
+  } catch (err) {
     return {
-      content: [
-        {
-          type: 'text',
-          text: `Error: ${error.message}`,
-        },
-      ],
+      content: [{ type: 'text', text: `Error: ${errorMessage(err)}` }],
       isError: true,
     };
   }
 });
 
-// Start the server
+// ── Start ────────────────────────────────────────────────────────────────────
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('Shell bridge MCP server running on stdio');
 }
 
-main().catch((error) => {
-  console.error('Server failed to start:', error);
+main().catch((err) => {
+  console.error('Server failed to start:', err);
   process.exit(1);
 });

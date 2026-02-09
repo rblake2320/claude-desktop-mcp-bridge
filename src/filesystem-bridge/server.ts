@@ -7,9 +7,9 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { readFile, writeFile, access } from 'fs/promises';
+import { readFile, writeFile, access, mkdir } from 'fs/promises';
 import { glob } from 'glob';
-import { dirname, resolve, relative } from 'path';
+import { dirname, resolve, relative, normalize, sep } from 'path';
 import { z } from 'zod';
 
 // Configuration schema
@@ -29,14 +29,47 @@ class FilesystemBridge {
   }
 
   /**
-   * Check if a path is within allowed paths
+   * Check if a path is within allowed paths (Windows + Unix compatible)
    */
   private isPathAllowed(filePath: string): boolean {
-    const resolvedPath = resolve(filePath);
+    const resolvedPath = normalize(resolve(filePath));
     return this.config.allowedPaths.some(allowedPath => {
-      const resolvedAllowed = resolve(allowedPath);
-      return resolvedPath.startsWith(resolvedAllowed);
+      const resolvedAllowed = normalize(resolve(allowedPath));
+
+      // Windows: case-insensitive comparison
+      if (process.platform === 'win32') {
+        return resolvedPath.toLowerCase().startsWith(resolvedAllowed.toLowerCase() + sep) ||
+               resolvedPath.toLowerCase() === resolvedAllowed.toLowerCase();
+      }
+
+      // Unix: case-sensitive comparison
+      return resolvedPath.startsWith(resolvedAllowed + sep) ||
+             resolvedPath === resolvedAllowed;
     });
+  }
+
+  /**
+   * Ensure directory exists (recursive mkdir -p)
+   */
+  private async ensureDirectory(dirPath: string): Promise<void> {
+    try {
+      await access(dirPath);
+    } catch {
+      await mkdir(dirPath, { recursive: true });
+    }
+  }
+
+  /**
+   * Safe error message extraction
+   */
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    return String(error);
   }
 
   /**
@@ -59,12 +92,12 @@ class FilesystemBridge {
         .map((line, index) => `${startLine + index + 1}→${line}`)
         .join('\n');
     } catch (error) {
-      throw new Error(`Failed to read file ${filePath}: ${error.message}`);
+      throw new Error(`Failed to read file ${filePath}: ${this.getErrorMessage(error)}`);
     }
   }
 
   /**
-   * Write file contents (like Claude Code's Write tool)
+   * Write file contents (like Claude Code's Write tool) with recursive directory creation
    */
   async writeFile(filePath: string, content: string): Promise<string> {
     if (this.config.readOnly) {
@@ -80,16 +113,14 @@ class FilesystemBridge {
     }
 
     try {
-      // Ensure directory exists
+      // Ensure parent directory exists (mkdir -p equivalent)
       const dir = dirname(filePath);
-      await access(dir).catch(async () => {
-        throw new Error(`Directory ${dir} does not exist`);
-      });
+      await this.ensureDirectory(dir);
 
       await writeFile(filePath, content, 'utf-8');
       return `File written successfully: ${filePath}`;
     } catch (error) {
-      throw new Error(`Failed to write file ${filePath}: ${error.message}`);
+      throw new Error(`Failed to write file ${filePath}: ${this.getErrorMessage(error)}`);
     }
   }
 
@@ -126,7 +157,7 @@ class FilesystemBridge {
       await writeFile(filePath, newContent, 'utf-8');
       return `File edited successfully: ${filePath}`;
     } catch (error) {
-      throw new Error(`Failed to edit file ${filePath}: ${error.message}`);
+      throw new Error(`Failed to edit file ${filePath}: ${this.getErrorMessage(error)}`);
     }
   }
 
@@ -149,7 +180,7 @@ class FilesystemBridge {
       // Return relative paths for easier reading
       return allowedFiles.map(file => relative(searchPath, file));
     } catch (error) {
-      throw new Error(`Failed to search for pattern ${pattern}: ${error.message}`);
+      throw new Error(`Failed to search for pattern ${pattern}: ${this.getErrorMessage(error)}`);
     }
   }
 }
@@ -333,7 +364,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [
         {
           type: 'text',
-          text: `Error: ${error.message}`,
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
         },
       ],
       isError: true,

@@ -2,7 +2,7 @@
   "mcpServers": {
     "filesystem-bridge": {
       "command": "node",
-      "args": ["./dist/filesystem-bridge/server.js"],
+      "args": ["/ABSOLUTE/PATH/TO/claude-desktop-mcp-bridge/dist/filesystem-bridge/server.js"],
       "env": {
         "ALLOWED_PATHS": "/Users/yourname/projects,/Users/yourname/Documents",
         "READ_ONLY": "false",
@@ -11,7 +11,7 @@
     },
     "shell-bridge": {
       "command": "node",
-      "args": ["./dist/shell-bridge/server.js"],
+      "args": ["/ABSOLUTE/PATH/TO/claude-desktop-mcp-bridge/dist/shell-bridge/server.js"],
       "env": {
         "TIMEOUT": "120000",
         "ALLOWED_COMMANDS": "ls,pwd,cd,cat,grep,find,git,npm,node,python",
@@ -24,30 +24,41 @@
 /*
 Claude Desktop MCP Configuration Guide:
 
-1. Find your Claude Desktop config directory:
+IMPORTANT: You MUST use absolute paths in the "args" field!
+
+1. Build the MCP servers first:
+   npm install && npm run build
+
+2. Get the absolute path to this project:
+   pwd  # or echo $PWD (Unix) / cd (Windows)
+
+3. Find your Claude Desktop config file:
    - macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
    - Windows: %APPDATA%\Claude\claude_desktop_config.json
    - Linux: ~/.config/Claude/claude_desktop_config.json
 
-2. Edit the config file and add the mcpServers section above
+4. Replace "/ABSOLUTE/PATH/TO/claude-desktop-mcp-bridge" with your actual path
 
-3. Adjust the ALLOWED_PATHS to your project directories
+5. Update ALLOWED_PATHS to your project directories
 
-4. Restart Claude Desktop
+6. Restart Claude Desktop
 
-5. The new tools should appear in your conversation:
-   - read_file
-   - write_file
-   - edit_file
-   - glob_search
-   - run_command
-   - run_background
-   - get_current_directory
-   - change_directory
+7. The new tools should appear in your conversation:
+   - read_file, write_file, edit_file, glob_search (filesystem operations)
+   - run_command, run_background, get_current_directory, change_directory (shell operations)
+
+Example absolute paths:
+- Unix: "/home/user/projects/claude-desktop-mcp-bridge/dist/filesystem-bridge/server.js"
+- Windows: "C:\\Users\\user\\projects\\claude-desktop-mcp-bridge\\dist\\filesystem-bridge\\server.js"
 
 Security Notes:
 - ALLOWED_PATHS: Comma-separated list of directories the filesystem bridge can access
 - READ_ONLY: Set to "true" to disable write operations
-- ALLOWED_COMMANDS: Whitelist specific commands (optional, comment out for more freedom)
+- ALLOWED_COMMANDS: Whitelist specific commands (optional)
 - BLOCKED_COMMANDS: Always block dangerous commands like rm, format, etc.
+
+Troubleshooting:
+- If tools don't appear: Check Claude Desktop logs for MCP server startup errors
+- If paths fail: Ensure all paths are absolute, not relative
+- If commands fail: Check BLOCKED_COMMANDS list and file permissions
 */

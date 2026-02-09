@@ -63,6 +63,19 @@ class ShellBridge {
   }
 
   /**
+   * Safe error message extraction
+   */
+  private getErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    return String(error);
+  }
+
+  /**
    * Execute a command (like Claude Code's Bash tool)
    */
   async runCommand(command: string, description?: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -85,7 +98,7 @@ class ShellBridge {
     } catch (error: any) {
       // Handle timeout and other execution errors
       const stdout = this.truncateOutput(error.stdout || '');
-      const stderr = this.truncateOutput(error.stderr || error.message || '');
+      const stderr = this.truncateOutput(error.stderr || this.getErrorMessage(error));
       const exitCode = error.code || 1;
 
       if (error.signal === 'SIGTERM' && error.killed) {
@@ -122,7 +135,7 @@ class ShellBridge {
         message: `Background task started with ID: ${taskId}. PID: ${child.pid}`,
       };
     } catch (error) {
-      throw new Error(`Failed to start background task: ${error.message}`);
+      throw new Error(`Failed to start background task: ${this.getErrorMessage(error)}`);
     }
   }
 
@@ -142,7 +155,7 @@ class ShellBridge {
       this.config.workingDirectory = process.cwd();
       return `Changed directory to: ${this.config.workingDirectory}`;
     } catch (error) {
-      throw new Error(`Failed to change directory to ${path}: ${error.message}`);
+      throw new Error(`Failed to change directory to ${path}: ${this.getErrorMessage(error)}`);
     }
   }
 }
@@ -301,7 +314,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [
         {
           type: 'text',
-          text: `Error: ${error.message}`,
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
         },
       ],
       isError: true,

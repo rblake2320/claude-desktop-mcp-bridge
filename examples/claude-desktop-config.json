@@ -1,64 +1,35 @@
 {
+  "_comment": [
+    "IMPORTANT: Replace paths below with ABSOLUTE paths to your clone.",
+    "  macOS/Linux example: /Users/yourname/claude-desktop-mcp-bridge/dist/...",
+    "  Windows example:     C:/Users/yourname/claude-desktop-mcp-bridge/dist/...",
+    "",
+    "Config file locations:",
+    "  macOS:   ~/Library/Application Support/Claude/claude_desktop_config.json",
+    "  Windows: %APPDATA%\\Claude\\claude_desktop_config.json",
+    "  Linux:   ~/.config/Claude/claude_desktop_config.json"
+  ],
   "mcpServers": {
     "filesystem-bridge": {
       "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/claude-desktop-mcp-bridge/dist/filesystem-bridge/server.js"],
+      "args": [
+        "C:/Users/YOURNAME/claude-desktop-mcp-bridge/dist/filesystem-bridge/server.js"
+      ],
       "env": {
-        "ALLOWED_PATHS": "/Users/yourname/projects,/Users/yourname/Documents",
+        "ALLOWED_PATHS": "C:/Users/YOURNAME/projects,C:/Users/YOURNAME/Documents",
         "READ_ONLY": "false",
         "MAX_FILE_SIZE": "10485760"
       }
     },
     "shell-bridge": {
       "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/claude-desktop-mcp-bridge/dist/shell-bridge/server.js"],
+      "args": [
+        "C:/Users/YOURNAME/claude-desktop-mcp-bridge/dist/shell-bridge/server.js"
+      ],
       "env": {
         "TIMEOUT": "120000",
-        "ALLOWED_COMMANDS": "ls,pwd,cd,cat,grep,find,git,npm,node,python",
-        "BLOCKED_COMMANDS": "rm,rmdir,del,format,fdisk,sudo"
+        "BLOCKED_COMMANDS": "rm,rmdir,del,format,fdisk,mkfs,dd,shutdown,reboot"
       }
     }
   }
 }
-
-/*
-Claude Desktop MCP Configuration Guide:
-
-IMPORTANT: You MUST use absolute paths in the "args" field!
-
-1. Build the MCP servers first:
-   npm install && npm run build
-
-2. Get the absolute path to this project:
-   pwd  # or echo $PWD (Unix) / cd (Windows)
-
-3. Find your Claude Desktop config file:
-   - macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
-   - Windows: %APPDATA%\Claude\claude_desktop_config.json
-   - Linux: ~/.config/Claude/claude_desktop_config.json
-
-4. Replace "/ABSOLUTE/PATH/TO/claude-desktop-mcp-bridge" with your actual path
-
-5. Update ALLOWED_PATHS to your project directories
-
-6. Restart Claude Desktop
-
-7. The new tools should appear in your conversation:
-   - read_file, write_file, edit_file, glob_search (filesystem operations)
-   - run_command, run_background, get_current_directory, change_directory (shell operations)
-
-Example absolute paths:
-- Unix: "/home/user/projects/claude-desktop-mcp-bridge/dist/filesystem-bridge/server.js"
-- Windows: "C:\\Users\\user\\projects\\claude-desktop-mcp-bridge\\dist\\filesystem-bridge\\server.js"
-
-Security Notes:
-- ALLOWED_PATHS: Comma-separated list of directories the filesystem bridge can access
-- READ_ONLY: Set to "true" to disable write operations
-- ALLOWED_COMMANDS: Whitelist specific commands (optional)
-- BLOCKED_COMMANDS: Always block dangerous commands like rm, format, etc.
-
-Troubleshooting:
-- If tools don't appear: Check Claude Desktop logs for MCP server startup errors
-- If paths fail: Ensure all paths are absolute, not relative
-- If commands fail: Check BLOCKED_COMMANDS list and file permissions
-*/

@@ -30,6 +30,16 @@
         "TIMEOUT": "120000",
         "BLOCKED_COMMANDS": "rm,rmdir,del,format,fdisk,mkfs,dd,shutdown,reboot"
       }
+    },
+    "skills-bridge": {
+      "command": "node",
+      "args": [
+        "C:/Users/YOURNAME/claude-desktop-mcp-bridge/dist/skills-bridge/server.js"
+      ],
+      "env": {
+        "SKILLS_PATH": "~/.claude/skills/",
+        "TIMEOUT": "60000"
+      }
     }
   }
 }

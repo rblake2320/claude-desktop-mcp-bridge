@@ -1,0 +1,6 @@
+This is a test file for reading with the filesystem-bridge MCP server.
+It contains multiple lines of text to test the read functionality.
+
+Line 1: Hello World
+Line 2: Testing MCP Bridge
+Line 3: This should be readable by Claude Desktop

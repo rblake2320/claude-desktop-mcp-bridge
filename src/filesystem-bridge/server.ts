@@ -7,9 +7,9 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { readFile, writeFile, mkdir, access } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import { glob } from 'glob';
-import { dirname, resolve, relative, sep, posix } from 'path';
+import { dirname, resolve, relative } from 'path';
 import { z } from 'zod';
 import { platform } from 'os';
 

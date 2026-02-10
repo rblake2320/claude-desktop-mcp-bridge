@@ -70,13 +70,13 @@ interface SecurityReport {
 
 /** Dangerous patterns that could indicate prompt injection */
 const PROMPT_INJECTION_PATTERNS = [
-  /ignore\s+(previous|above|all)\s+(instructions?|prompts?|rules?)/i,
+  /ignore\s+(?:all\s+)?(?:previous|above|prior|earlier)\s+(?:\w+\s+)?(instructions?|prompts?|rules?|context)/i,
+  /ignore\s+(?:the\s+)?(?:instructions?|prompts?|rules?)\s+(?:above|before|previously)/i,
   /forget\s+(everything|all|previous|instructions?)/i,
   /act\s+as\s+(?:if\s+you\s+are\s+)?(?:a\s+)?(?:different|new|another)\s+(?:ai|assistant|bot|system)/i,
   /(?:^|\s)system\s*:\s*(?:you\s+are|act|behave|ignore)/i,
   /<\s*(?:system|admin|root|user)\s*>/i,
   /\[\s*(?:system|admin|root)\s*\]/i,
-  /eval\s*\(|exec\s*\(|function\s*\(|=>\s*{/i, // Code injection
   /(?:rm\s+-rf|del\s+\/|format\s+c:)/i, // Dangerous commands
 ];
 
@@ -1191,20 +1191,11 @@ class SkillsBridge {
 
     let response = `${categoryEmoji[this.getSkillCategory(skill)] || '💡'} **${skill.name.toUpperCase()} SKILL ACTIVATED**\n\n`;
 
-    response += `**Task Analysis:** ${input}\n\n`;
-
+    response += `**Task:** ${input}\n`;
     if (args) {
-      response += `**Additional Arguments:** ${args}\n\n`;
+      response += `**Args:** ${args}\n`;
     }
-
-    response += `**Skill Overview:** ${skill.description}\n\n`;
-
-    response += `**Key Capabilities Applied:**\n`;
-    for (const capability of skill.capabilities.slice(0, 5)) {
-      response += `• ${capability}\n`;
-    }
-
-    response += `\n**Recommended Approach for "${input}":**\n`;
+    response += `\n`;
 
     // Generate skill-specific recommendations
     const guidanceMap: Record<string, () => string> = {
@@ -1240,17 +1231,11 @@ class SkillsBridge {
       response += this.generateGeneralGuidance(skill, input);
     }
 
-    if (skill.pairsWith.length > 0 && !skill.pairsWith.includes('all skills')) {
-      response += `\n\n**Recommended Skill Combinations:**\n`;
-      response += `This skill pairs well with: ${skill.pairsWith.join(', ')}\n`;
-      response += `Consider using multiple skills together for comprehensive solutions.`;
+    if (skill.pairsWith.length > 0 &&
+        !skill.pairsWith.includes('all skills') &&
+        !skill.pairsWith.some(p => p.includes('all skills'))) {
+      response += `\n\n**Pairs with:** ${skill.pairsWith.join(', ')}`;
     }
-
-    response += `\n\n**Next Steps:**\n`;
-    response += `1. Review the approach above\n`;
-    response += `2. Ask follow-up questions for specific implementation details\n`;
-    response += `3. Request code examples or detailed tutorials\n`;
-    response += `4. Consider pairing with complementary skills if needed`;
 
     return response;
   }

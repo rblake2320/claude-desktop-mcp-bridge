@@ -175,9 +175,9 @@ export class TrustManager {
     // Cache the request
     this.approvalCache.set(requestId, request);
 
-    console.log(`📋 Approval request created for skill '${manifest.name}' (Risk: ${request.risk_assessment.risk_level})`);
-    console.log(`   Request ID: ${requestId}`);
-    console.log(`   Expires: ${request.expires_at}`);
+    console.error(`📋 Approval request created for skill '${manifest.name}' (Risk: ${request.risk_assessment.risk_level})`);
+    console.error(`   Request ID: ${requestId}`);
+    console.error(`   Expires: ${request.expires_at}`);
 
     return requestId;
   }
@@ -205,7 +205,7 @@ export class TrustManager {
             }
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            console.warn(`⚠️ Failed to load approval request ${file}: ${errorMessage}`);
+            console.error(`⚠️ Failed to load approval request ${file}: ${errorMessage}`);
           }
         }
       }
@@ -242,11 +242,11 @@ export class TrustManager {
       const recordPath = join(this.approvalsPath, `${requestId}_approved.json`);
       await writeFile(recordPath, JSON.stringify(approvalRecord, null, 2));
 
-      console.log(`✅ Approval processed for skill '${request.skill_name}': ${decision.approved ? 'APPROVED' : 'REJECTED'}`);
-      console.log(`   Reason: ${decision.reason}`);
+      console.error(`✅ Approval processed for skill '${request.skill_name}': ${decision.approved ? 'APPROVED' : 'REJECTED'}`);
+      console.error(`   Reason: ${decision.reason}`);
 
       if (decision.approved && decision.new_trust_level) {
-        console.log(`   New trust level: ${decision.new_trust_level}`);
+        console.error(`   New trust level: ${decision.new_trust_level}`);
       }
 
       // Remove from cache
@@ -280,7 +280,7 @@ export class TrustManager {
       //   expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
       // };
 
-      console.log(`🤖 Auto-approving low-risk skill: ${manifest.name}`);
+      console.error(`🤖 Auto-approving low-risk skill: ${manifest.name}`);
       return true;
     }
 
@@ -306,7 +306,7 @@ export class TrustManager {
 
     // System level requires manual approval
     if (targetTrust === TrustLevel.BUILT_IN) {
-      console.log(`⚠️ System trust level elevation for '${skillName}' requires manual review`);
+      console.error(`⚠️ System trust level elevation for '${skillName}' requires manual review`);
       return false;
     }
 
@@ -395,12 +395,12 @@ export class TrustManager {
             if (request.expires_at && new Date(request.expires_at) <= new Date()) {
               // In production, you might want to archive instead of delete
               // const requestPath = join(this.approvalsPath, file);
-              console.log(`🗑️ Cleaning up expired approval request for ${request.skill_name}`);
+              console.error(`🗑️ Cleaning up expired approval request for ${request.skill_name}`);
               cleanedCount++;
             }
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            console.warn(`⚠️ Failed to check expiry for ${file}: ${errorMessage}`);
+            console.error(`⚠️ Failed to check expiry for ${file}: ${errorMessage}`);
           }
         }
       }

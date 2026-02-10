@@ -48,9 +48,9 @@ export class SkillRegistry {
       await this.createSchema();
       await this.loadSkillsFromDatabase();
 
-      console.log(`✅ SkillRegistry initialized: ${this.skills.size} skills loaded`);
+      console.error(`✅ SkillRegistry initialized: ${this.skills.size} skills loaded`);
     } catch (error) {
-      console.warn(`⚠️ SQLite not available, using in-memory registry: ${error}`);
+      console.error(`⚠️ SQLite not available, using in-memory registry: ${error}`);
       // Fallback to in-memory operation
       this.db = null;
     }

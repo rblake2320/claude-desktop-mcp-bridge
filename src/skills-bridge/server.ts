@@ -801,7 +801,7 @@ class SkillsBridge {
     if (this.initialized) return;
 
     try {
-      console.log('🔧 Initializing Skills Bridge with dynamic loading...');
+      console.error('Initializing Skills Bridge with dynamic loading...');
 
       // Initialize components
       await this.registry.initialize();
@@ -811,12 +811,12 @@ class SkillsBridge {
 
       // Scan and load dynamic skills
       const scanResult = await this.loader.scanAllSkills();
-      console.log(`📊 Skill scan complete: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded, ${scanResult.pending_approval} pending approval`);
+      console.error(`Skill scan complete: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded, ${scanResult.pending_approval} pending approval`);
 
       if (scanResult.errors.length > 0) {
-        console.warn(`⚠️ Skill loading errors: ${scanResult.errors.length} skills failed`);
+        console.error(`Skill loading errors: ${scanResult.errors.length} skills failed`);
         scanResult.errors.forEach(error => {
-          console.warn(`   ${error.skill_name}: ${error.error}`);
+          console.error(`  ${error.skill_name}: ${error.error}`);
         });
       }
 
@@ -824,7 +824,7 @@ class SkillsBridge {
       await this.loadDynamicSkills();
 
       this.initialized = true;
-      console.log(`✅ Skills Bridge initialized: ${this.skills.size} skills total (${SKILL_DEFINITIONS.length} legacy + ${this.skills.size - SKILL_DEFINITIONS.length} dynamic)`);
+      console.error(`Skills Bridge initialized: ${this.skills.size} skills total (${SKILL_DEFINITIONS.length} legacy + ${this.skills.size - SKILL_DEFINITIONS.length} dynamic)`);
 
     } catch (error) {
       console.error('⚠️ Skills Bridge dynamic loading failed, falling back to legacy-only mode:', error);
@@ -882,7 +882,7 @@ class SkillsBridge {
           await this.registry.registerSkill(manifest, dynamicDefinition);
         }
       } catch (error) {
-        console.warn(`⚠️ Failed to migrate legacy skill ${legacySkill.name}:`, error);
+        console.error(`Failed to migrate legacy skill ${legacySkill.name}:`, error);
       }
     }
   }
@@ -1053,7 +1053,7 @@ class SkillsBridge {
     const scanResult = await this.loader.scanAllSkills();
     await this.loadDynamicSkills();
 
-    console.log(`🔄 Skills rescanned: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded`);
+    console.error(`Skills rescanned: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded`);
     return scanResult;
   }
 

@@ -129,7 +129,7 @@ export class SkillLoader {
             }
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            console.warn(`⚠️ Failed to load skill from ${skillDir}: ${errorMessage}`);
+            console.error(`⚠️ Failed to load skill from ${skillDir}: ${errorMessage}`);
           }
         }
       }
@@ -178,7 +178,7 @@ export class SkillLoader {
 
       // Verify trust level matches directory
       if (manifest.trust_level !== expectedTrustLevel) {
-        console.warn(`⚠️ Trust level mismatch for ${manifest.name}: manifest=${manifest.trust_level}, directory=${expectedTrustLevel}`);
+        console.error(`⚠️ Trust level mismatch for ${manifest.name}: manifest=${manifest.trust_level}, directory=${expectedTrustLevel}`);
         manifest.trust_level = expectedTrustLevel; // Use directory trust level
       }
 
@@ -400,7 +400,7 @@ export class SkillLoader {
 
       return items;
     } catch (error) {
-      console.warn(`Failed to parse array string: ${arrayStr}`);
+      console.error(`Failed to parse array string: ${arrayStr}`);
       return [];
     }
   }

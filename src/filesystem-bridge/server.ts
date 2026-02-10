@@ -31,7 +31,7 @@ const PATH_TRAVERSAL_PATTERNS = [
   /\.\./,                                    // Directory traversal
   /[;&|`$(){}[\]\\]/,                       // Shell metacharacters in paths
   /\x00/,                                   // Null byte injection
-  /[<>:"|*?]/,                              // Windows forbidden characters
+  /[<>"|*?]/,                               // Windows forbidden characters (colon allowed for drive letters)
   /(^|\/)\.\.($|\/)/,                       // Explicit .. directory references
 ];
 

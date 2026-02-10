@@ -26,7 +26,7 @@ function errorMessage(err: unknown): string {
 
 /** Security patterns that indicate potential command injection */
 const COMMAND_INJECTION_PATTERNS = [
-  /[;&|`$(){}[\]\\]/,                    // Shell metacharacters
+  /[;&|`$(){}[\]]/,                     // Shell metacharacters (backslash allowed for Windows paths)
   /\n|\r/,                               // Line breaks
   /\.\./,                                // Directory traversal
   /\s+(rm|del|format|fdisk|mkfs|dd|shutdown|reboot|halt|poweroff)\s/i, // Dangerous commands
@@ -105,8 +105,8 @@ const CommandValidationSchemas = {
         'Path traversal not allowed'
       )
       .refine(
-        (path) => !/[;&|`$(){}[\]\\]/.test(path),
-        'Path contains invalid characters'
+        (path) => !/[;&|`$(){}[\]]/.test(path),
+        'Path contains invalid characters (backslash allowed for Windows paths)'
       )
   })
 };

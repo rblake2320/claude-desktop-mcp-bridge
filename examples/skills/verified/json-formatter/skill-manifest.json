@@ -1,0 +1,41 @@
+{
+  "name": "json-formatter",
+  "version": "1.0.0",
+  "author": "AI Army",
+  "created": "2026-02-09T22:46:00Z",
+  "updated": "2026-02-09T22:46:00Z",
+  "trust_level": "verified",
+  "integrity_hash": "995bea48b0f2cbfcdaab88a8418eccc75385ae2ee11582bbf7704d46e1b9e21d",
+  "signature": "sha256:abc123def456...",
+  "capabilities": [
+    "json-format",
+    "json-validate",
+    "json-minify",
+    "json-beautify"
+  ],
+  "required_permissions": [
+    "read:text",
+    "write:text"
+  ],
+  "resource_limits": {
+    "max_memory_mb": 64,
+    "timeout_seconds": 30,
+    "max_file_size_mb": 5,
+    "max_network_requests": 0
+  },
+  "description": "Format, validate, and beautify JSON data with syntax highlighting and error detection",
+  "category": "standard",
+  "triggers": [
+    "format json",
+    "json format",
+    "beautify json",
+    "validate json",
+    "minify json",
+    "json pretty",
+    "fix json"
+  ],
+  "pairs_with": [
+    "code-review-agent",
+    "clean-code"
+  ]
+}

@@ -157,6 +157,148 @@ claude-desktop-mcp-bridge/
 - 📝 **Audit logging**: All operations logged for security review
 - 🚫 **Safe defaults**: Read-only mode by default, write access requires explicit configuration
 
+## 🏪 Skill Marketplace Ready
+
+This bridge includes production-ready **dynamic skill loading infrastructure** designed for security-first skill marketplaces and enterprise deployment.
+
+### Trust Levels & Security Model
+
+Our security-first approach uses **trust-based quarantine** to safely integrate community skills:
+
+| Trust Level | Description | Approval Required | Resource Limits | Example |
+|-------------|-------------|-------------------|-----------------|---------|
+| **🔒 SYSTEM** | Built-in core functionality | None | Unlimited | Ultra Frontend, Master Debugger |
+| **✅ VERIFIED** | Digitally signed trusted skills | None | Standard (64MB, 30s) | json-formatter |
+| **⚠️ UNTRUSTED** | Community contributions | **User approval** | Strict (128MB, 45s) | url-checker |
+
+### Directory Structure
+
+Skills live in a standardized directory structure with automatic discovery:
+
+```
+~/.claude/skills/
+├── .approvals/           # Approval workflow state
+├── .cache/              # Discovery and validation cache
+├── built-in/            # Legacy 22-skill library (preserved)
+├── verified/            # Signed, trusted skills
+│   └── json-formatter/  # ✅ Example: loads immediately
+│       ├── skill-manifest.json
+│       └── skill.ts
+├── untrusted/           # Community skills requiring approval
+│   └── url-checker/     # ⚠️ Example: requires user approval
+│       ├── skill-manifest.json
+│       └── skill.ts
+└── README.md           # Golden-path examples and documentation
+```
+
+### Approval Workflow
+
+The trust system provides **safe community skill integration**:
+
+1. **Discovery**: Skills auto-discovered from `verified/` and `untrusted/` directories
+2. **Security Scan**: Code analyzed for dangerous patterns (eval, exec, file deletion)
+3. **Trust Validation**: Signatures checked, resource limits applied
+4. **Approval Gate**: UNTRUSTED skills prompt user before loading
+5. **Runtime Isolation**: Each skill runs in controlled environment
+
+**VERIFIED skills** load immediately, **UNTRUSTED skills** require one-time user approval.
+
+### Quick Start: Create Your First Skill
+
+```bash
+# 1. Copy the golden-path example
+mkdir -p ~/.claude/skills/verified/my-skill
+cp ~/.claude/skills/verified/json-formatter/* ~/.claude/skills/verified/my-skill/
+
+# 2. Edit the manifest
+cat > ~/.claude/skills/verified/my-skill/skill-manifest.json << 'EOF'
+{
+  "name": "my-skill",
+  "version": "1.0.0",
+  "author": "Your Name",
+  "trust_level": "verified",
+  "capabilities": ["my-capability"],
+  "required_permissions": ["read:text", "write:text"],
+  "resource_limits": {
+    "max_memory_mb": 64,
+    "timeout_seconds": 30,
+    "max_network_requests": 0
+  },
+  "description": "My awesome skill",
+  "triggers": ["my skill", "help me"]
+}
+EOF
+
+# 3. Write the implementation
+cat > ~/.claude/skills/verified/my-skill/skill.ts << 'EOF'
+export default function mySkill(action: string, ...args: string[]) {
+  if (action === 'greet') {
+    return `Hello ${args.join(' ')}! This is my custom skill.`;
+  }
+  return 'Available actions: greet <name>';
+}
+EOF
+
+# 4. Update integrity hash
+cd ~/.claude/skills
+node -e "
+  const crypto = require('crypto');
+  const fs = require('fs');
+  const manifest = JSON.parse(fs.readFileSync('verified/my-skill/skill-manifest.json'));
+  const skillCode = fs.readFileSync('verified/my-skill/skill.ts');
+  manifest.integrity_hash = crypto.createHash('sha256').update(skillCode).digest('hex');
+  fs.writeFileSync('verified/my-skill/skill-manifest.json', JSON.stringify(manifest, null, 2));
+  console.log('✅ Skill ready!');
+"
+
+# 5. Test with skill doctor
+./verify-examples.sh  # Validates your new skill
+```
+
+### Security Model Rationale
+
+**Why trust-based quarantine?**
+
+- **🔒 Enterprise Safe**: SYSTEM and VERIFIED skills never prompt users
+- **🚀 Innovation Friendly**: Community can contribute UNTRUSTED skills freely
+- **🛡️ User Control**: Clear approval workflow for risky operations
+- **📈 Scalable**: Router pattern enables unlimited skills without context bloat
+- **🏪 Marketplace Ready**: Foundation for skill publishers and monetization
+
+### Production Infrastructure
+
+**Backwards Compatible**: All 22 legacy skills preserved and enhanced
+**Router Pattern**: Skills loaded on-demand, preventing context overflow
+**Cache System**: Fast discovery with SQLite + FTS5 memory engine
+**Audit Trail**: All skill operations logged for compliance
+**Resource Management**: Configurable limits per trust level
+
+### Integration Points
+
+Ready for skill marketplace publishers:
+
+```javascript
+// Skill discovery API
+const skills = await discoverSkills(['verified', 'untrusted']);
+
+// Trust validation
+const trustStatus = await validateSkillTrust(skillPath);
+
+// Runtime isolation
+const result = await executeSkill(skillName, args, {
+  memoryLimit: '64MB',
+  timeout: 30000,
+  networkAccess: false
+});
+```
+
+**Learn More**:
+- [Skill Examples Guide](~/.claude/skills/SKILL_EXAMPLES_GUIDE.md)
+- [Skill Doctor CLI](~/.claude/skills/verify-examples.sh)
+- [Dynamic Loading Tests](~/.claude/skills/test-skill-loading.js)
+
+---
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.

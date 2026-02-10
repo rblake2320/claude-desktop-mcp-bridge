@@ -1,0 +1,47 @@
+{
+  "name": "url-checker",
+  "version": "1.0.0",
+  "author": "Community User",
+  "created": "2026-02-09T22:46:00Z",
+  "updated": "2026-02-09T22:46:00Z",
+  "trust_level": "untrusted",
+  "integrity_hash": "8ef42c9142f5aa3c314abe99381a4d852592f95b20f4fac45eeda9db493b5e7e",
+  "capabilities": [
+    "url-validation",
+    "url-analysis",
+    "security-check",
+    "link-safety"
+  ],
+  "required_permissions": [
+    "read:text",
+    "write:text",
+    "network:fetch",
+    "network:dns"
+  ],
+  "resource_limits": {
+    "max_memory_mb": 128,
+    "timeout_seconds": 45,
+    "max_file_size_mb": 1,
+    "max_network_requests": 5,
+    "allowed_domains": [
+      "api.safebrowsing.google.com",
+      "urlhaus-api.abuse.ch",
+      "whois.whoisjson.com"
+    ]
+  },
+  "description": "Validate URLs and check for security threats, malicious links, and reputation issues",
+  "category": "standard",
+  "triggers": [
+    "check url",
+    "validate url",
+    "url safety",
+    "link check",
+    "malicious url",
+    "phishing check",
+    "url reputation"
+  ],
+  "pairs_with": [
+    "security-testing",
+    "web-scraping"
+  ]
+}

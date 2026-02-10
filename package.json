@@ -14,7 +14,10 @@
     "start:filesystem": "node dist/filesystem-bridge/server.js",
     "start:shell": "node dist/shell-bridge/server.js",
     "start:skills": "node dist/skills-bridge/server.js",
-    "start:all": "concurrently \"npm:start:filesystem\" \"npm:start:shell\" \"npm:start:skills\""
+    "start:all": "concurrently \"npm:start:filesystem\" \"npm:start:shell\" \"npm:start:skills\"",
+    "skill:check": "node scripts/skill-doctor.js",
+    "skill:test-doctor": "node scripts/test-skill-doctor.js",
+    "help": "node scripts/help.js"
   },
   "keywords": [
     "mcp",

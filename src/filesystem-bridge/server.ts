@@ -29,7 +29,7 @@ function errorMessage(err: unknown): string {
 /** Security patterns for filesystem operations */
 const PATH_TRAVERSAL_PATTERNS = [
   /\.\./,                                    // Directory traversal
-  /[;&|`$(){}[\]\\]/,                       // Shell metacharacters in paths
+  /[;&|`$(){}[\]]/,                        // Shell metacharacters in paths (backslash allowed for Windows)
   /\x00/,                                   // Null byte injection
   /[<>"|*?]/,                               // Windows forbidden characters (colon allowed for drive letters)
   /(^|\/)\.\.($|\/)/,                       // Explicit .. directory references

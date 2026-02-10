@@ -33,6 +33,22 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Helper function to get skill category with legacy mapping */
+function getSkillCategoryHelper(skill: SkillDefinition): string {
+  if ('category' in skill) {
+    // Map legacy categories to new ones
+    const categoryMap: Record<string, string> = {
+      master: 'development',
+      elite: 'utility',
+      standard: 'standard'
+    };
+    return categoryMap[skill.category] || skill.category;
+  }
+  return 'standard';
+}
+
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const ConfigSchema = z.object({
@@ -307,9 +323,9 @@ class SkillSecurityValidator {
 /** Comprehensive Zod validation schemas with advanced security checks */
 const SkillsValidationSchemas = {
   listSkills: z.object({
-    category: z.enum(['master', 'elite', 'standard', 'all']).default('all')
+    category: z.enum(['development', 'utility', 'standard', 'security', 'experimental', 'all']).default('all')
       .refine(
-        (cat) => ['master', 'elite', 'standard', 'all'].includes(cat),
+        (cat) => ['development', 'utility', 'standard', 'security', 'experimental', 'all'].includes(cat),
         'Invalid skill category'
       )
   }),
@@ -401,7 +417,7 @@ const SkillsValidationSchemas = {
 interface LegacySkillDefinition {
   name: string;
   description: string;
-  category: 'master' | 'elite' | 'standard';
+  category: 'master' | 'elite' | 'standard'; // Legacy categories, mapped to new ones
   triggers: string[];
   capabilities: string[];
   pairsWith: string[];
@@ -829,7 +845,7 @@ class SkillsBridge {
           author: 'Claude Skills Team',
           created: '2024-01-01T00:00:00Z',
           updated: new Date().toISOString(),
-          trust_level: TrustLevel.SYSTEM,
+          trust_level: TrustLevel.BUILT_IN,
           integrity_hash: createHash('sha256').update(JSON.stringify(legacySkill)).digest('hex'),
           capabilities: legacySkill.capabilities,
           required_permissions: [],
@@ -840,8 +856,8 @@ class SkillsBridge {
             max_network_requests: 100
           },
           description: legacySkill.description,
-          category: legacySkill.category === 'master' ? SkillCategory.MASTER :
-                   legacySkill.category === 'elite' ? SkillCategory.ELITE :
+          category: legacySkill.category === 'master' ? SkillCategory.DEVELOPMENT :
+                   legacySkill.category === 'elite' ? SkillCategory.UTILITY :
                    SkillCategory.STANDARD,
           triggers: legacySkill.triggers,
           pairs_with: legacySkill.pairsWith
@@ -856,7 +872,7 @@ class SkillsBridge {
           triggers: legacySkill.triggers,
           pairsWith: legacySkill.pairsWith,
           manifest,
-          trust_level: TrustLevel.SYSTEM,
+          trust_level: TrustLevel.BUILT_IN,
           last_loaded: new Date().toISOString()
         };
 
@@ -884,7 +900,7 @@ class SkillsBridge {
       }
 
       // Add dynamic skills to the skills map
-      if (skill.trust_level === TrustLevel.SYSTEM || skill.trust_level === TrustLevel.VERIFIED) {
+      if (skill.trust_level === TrustLevel.BUILT_IN || skill.trust_level === TrustLevel.VERIFIED) {
         this.skills.set(skill.name, skill);
       }
       // Untrusted skills remain in registry but aren't auto-loaded
@@ -929,9 +945,11 @@ class SkillsBridge {
     // Sort by category priority: master > elite > standard
     return matchingSkills.sort((a, b) => {
       const categoryOrder: Record<string, number> = {
-        master: 0,
-        elite: 1,
-        standard: 2
+        development: 0,
+        utility: 1,
+        security: 2,
+        standard: 3,
+        experimental: 4
       };
 
       const aCat = this.getSkillCategory(a);
@@ -944,10 +962,7 @@ class SkillsBridge {
    * Get category from either legacy or dynamic skill
    */
   private getSkillCategory(skill: SkillDefinition): string {
-    if ('category' in skill) {
-      return skill.category;
-    }
-    return 'standard';
+    return getSkillCategoryHelper(skill);
   }
 
   /**
@@ -1014,7 +1029,7 @@ class SkillsBridge {
    */
   private getTrustDistribution(): Record<string, number> {
     const distribution: Record<string, number> = {
-      [TrustLevel.SYSTEM]: 0,
+      [TrustLevel.BUILT_IN]: 0,
       [TrustLevel.VERIFIED]: 0,
       [TrustLevel.UNTRUSTED]: 0,
       legacy: 0
@@ -1054,13 +1069,15 @@ class SkillsBridge {
    * Generate a comprehensive skill response
    */
   private generateSkillResponse(skill: SkillDefinition, input: string, args?: string): string {
-    const categoryEmoji = {
-      master: '⭐',
-      elite: '🏆',
-      standard: '💡'
+    const categoryEmoji: Record<string, string> = {
+      development: '⭐',
+      utility: '🏆',
+      standard: '💡',
+      security: '🔒',
+      experimental: '🧪'
     };
 
-    let response = `${categoryEmoji[skill.category]} **${skill.name.toUpperCase()} SKILL ACTIVATED**\n\n`;
+    let response = `${categoryEmoji[this.getSkillCategory(skill)] || '💡'} **${skill.name.toUpperCase()} SKILL ACTIVATED**\n\n`;
 
     response += `**Task Analysis:** ${input}\n\n`;
 
@@ -1188,7 +1205,7 @@ const tools: Tool[] = [
       properties: {
         category: {
           type: 'string',
-          enum: ['master', 'elite', 'standard', 'all'],
+          enum: ['development', 'utility', 'standard', 'security', 'experimental', 'all'],
           description: 'Filter skills by category (default: all)',
           default: 'all',
         },
@@ -1300,9 +1317,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? availableSkills
           : availableSkills.filter(skill => skill.category === category);
 
-        const skillsList = filteredSkills.map(skill => {
-          const categoryEmoji = { master: '⭐', elite: '🏆', standard: '💡' };
-          return `${categoryEmoji[skill.category]} **${skill.name}** (${skill.category})\n   ${skill.description}\n   Triggers: ${skill.triggers.slice(0, 5).join(', ')}`;
+        const skillsList = filteredSkills.map((skill) => {
+          const categoryEmoji: Record<string, string> = { development: '⭐', utility: '🏆', standard: '💡', security: '🔒', experimental: '🧪' };
+          const category = getSkillCategoryHelper(skill);
+          return `${categoryEmoji[category] || '💡'} **${skill.name}** (${category})\n   ${skill.description}\n   Triggers: ${skill.triggers.slice(0, 5).join(', ')}`;
         }).join('\n\n');
 
         const summary = `**Available Claude Code Skills (${filteredSkills.length} total)**\n\n${skillsList}\n\n**Usage:** Use \`apply_skill\` to activate a specific skill, or \`auto_skill_match\` to find the best skill automatically.`;
@@ -1333,9 +1351,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           return { content: [{ type: 'text', text: `No skills found matching "${query}". Use \`list_skills\` to see all available skills.` }] };
         }
 
-        const skillsList = matchingSkills.map(skill => {
-          const categoryEmoji = { master: '⭐', elite: '🏆', standard: '💡' };
-          return `${categoryEmoji[skill.category]} **${skill.name}** (${skill.category})\n   ${skill.description}`;
+        const skillsList = matchingSkills.map((skill) => {
+          const categoryEmoji: Record<string, string> = { development: '⭐', utility: '🏆', standard: '💡', security: '🔒', experimental: '🧪' };
+          const category = getSkillCategoryHelper(skill);
+          return `${categoryEmoji[category] || '💡'} **${skill.name}** (${category})\n   ${skill.description}`;
         }).join('\n\n');
 
         const result = `**Skills matching "${query}" (${matchingSkills.length} found)**\n\n${skillsList}\n\n**Next:** Use \`apply_skill\` with one of these skill names to activate it.`;

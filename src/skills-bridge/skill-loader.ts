@@ -47,7 +47,7 @@ export class SkillLoader {
 
     // Scan each trust level directory
     const directories = [
-      { path: SKILL_DIRECTORIES.BUILTIN, trustLevel: TrustLevel.SYSTEM },
+      { path: SKILL_DIRECTORIES.BUILTIN, trustLevel: TrustLevel.BUILT_IN },
       { path: SKILL_DIRECTORIES.VERIFIED, trustLevel: TrustLevel.VERIFIED },
       { path: SKILL_DIRECTORIES.UNTRUSTED, trustLevel: TrustLevel.UNTRUSTED }
     ];
@@ -265,7 +265,7 @@ export class SkillLoader {
 
     // 3. Trust level validation
     switch (manifest.trust_level) {
-      case TrustLevel.SYSTEM:
+      case TrustLevel.BUILT_IN:
         // System skills must be in built-in directory
         if (!manifest.skill_file_path?.includes('built-in')) {
           issues.push('System trust level only allowed for built-in skills');

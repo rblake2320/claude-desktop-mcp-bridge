@@ -292,7 +292,7 @@ export class TrustManager {
    */
   async validateTrustElevation(skillName: string, currentTrust: TrustLevel, targetTrust: TrustLevel): Promise<boolean> {
     // Can only elevate by one level at a time
-    const trustLevels = [TrustLevel.UNTRUSTED, TrustLevel.VERIFIED, TrustLevel.SYSTEM];
+    const trustLevels = [TrustLevel.UNTRUSTED, TrustLevel.VERIFIED, TrustLevel.BUILT_IN];
     const currentIndex = trustLevels.indexOf(currentTrust);
     const targetIndex = trustLevels.indexOf(targetTrust);
 
@@ -305,7 +305,7 @@ export class TrustManager {
     }
 
     // System level requires manual approval
-    if (targetTrust === TrustLevel.SYSTEM) {
+    if (targetTrust === TrustLevel.BUILT_IN) {
       console.log(`⚠️ System trust level elevation for '${skillName}' requires manual review`);
       return false;
     }

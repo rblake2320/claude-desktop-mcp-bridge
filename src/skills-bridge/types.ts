@@ -4,15 +4,17 @@
  */
 
 export enum TrustLevel {
-  SYSTEM = "system",      // Built-in skills (full access)
+  BUILT_IN = "built-in",  // Built-in skills (full access)
   VERIFIED = "verified",  // Signed by trusted authority
   UNTRUSTED = "untrusted" // User-imported (sandboxed)
 }
 
 export enum SkillCategory {
-  MASTER = "master",
-  ELITE = "elite",
-  STANDARD = "standard"
+  STANDARD = "standard",
+  UTILITY = "utility",
+  DEVELOPMENT = "development",
+  SECURITY = "security",
+  EXPERIMENTAL = "experimental"
 }
 
 export interface SkillResourceLimits {
@@ -135,7 +137,7 @@ export interface SkillScanResult {
 
 // Default resource limits by trust level
 export const DEFAULT_RESOURCE_LIMITS: Record<TrustLevel, SkillResourceLimits> = {
-  [TrustLevel.SYSTEM]: {
+  [TrustLevel.BUILT_IN]: {
     max_memory_mb: 1024,      // 1GB for system skills
     timeout_seconds: 300,     // 5 minutes
     max_file_size_mb: 100,    // 100MB files

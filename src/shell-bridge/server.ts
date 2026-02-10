@@ -229,7 +229,7 @@ class ShellBridge {
         const child = spawn(program, args, {
           cwd: this.config.workingDirectory,
           stdio: 'pipe',
-          // CRITICAL: Never use shell: true here - it enables command injection
+          shell: true, // Required on Windows for .cmd wrappers (npm) and builtins (dir)
         });
 
         let stdout = '';
@@ -320,7 +320,7 @@ class ShellBridge {
         cwd: this.config.workingDirectory,
         detached: true,
         stdio: 'ignore',
-        // CRITICAL: Never use shell: true here - it enables command injection
+        shell: true, // Required on Windows for .cmd wrappers and builtins
       });
       child.unref();
 

@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { appendFile } from 'fs/promises';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { createHash } from 'node:crypto';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -197,7 +198,7 @@ class SkillsSecurityLogger {
       operation: event.operation || 'unknown',
       skill: event.skillName || undefined,
       reason: event.reason,
-      input_hash: event.input ? require('crypto').createHash('sha256').update(event.input).digest('hex').substring(0, 16) : undefined,
+      input_hash: event.input ? createHash('sha256').update(event.input).digest('hex').substring(0, 16) : undefined,
       client: event.clientInfo || 'unknown'
     }) + '\n';
 
@@ -209,7 +210,7 @@ class SkillsSecurityLogger {
   }
 
   static async logToolExecution(toolName: string, args: any, result: 'SUCCESS' | 'ERROR', details?: string) {
-    const argsHash = require('crypto').createHash('sha256').update(JSON.stringify(args)).digest('hex').substring(0, 16);
+    const argsHash = createHash('sha256').update(JSON.stringify(args)).digest('hex').substring(0, 16);
 
     await SkillsSecurityLogger.logSecurityEvent({
       type: 'TOOL_EXECUTION',

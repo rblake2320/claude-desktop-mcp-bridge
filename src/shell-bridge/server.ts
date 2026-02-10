@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { appendFile } from 'fs/promises';
 import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
+import { createHash } from 'node:crypto';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -55,7 +56,7 @@ class SecurityAuditLogger {
       level: event.severity,
       type: event.type,
       reason: event.reason,
-      command_hash: event.command ? require('crypto').createHash('sha256').update(event.command).digest('hex').substring(0, 16) : undefined,
+      command_hash: event.command ? createHash('sha256').update(event.command).digest('hex').substring(0, 16) : undefined,
       client: event.clientInfo || 'unknown'
     }) + '\n';
 

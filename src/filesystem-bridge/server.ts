@@ -13,6 +13,7 @@ import { glob } from 'glob';
 import { dirname, resolve, relative, join, sep } from 'path';
 import { z } from 'zod';
 import { platform } from 'os';
+import { createHash } from 'node:crypto';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ class FileSystemSecurityLogger {
       type: event.type,
       operation: event.operation || 'unknown',
       reason: event.reason,
-      path_hash: event.path ? require('crypto').createHash('sha256').update(event.path).digest('hex').substring(0, 16) : undefined,
+      path_hash: event.path ? createHash('sha256').update(event.path).digest('hex').substring(0, 16) : undefined,
       client: event.clientInfo || 'unknown'
     }) + '\n';
 

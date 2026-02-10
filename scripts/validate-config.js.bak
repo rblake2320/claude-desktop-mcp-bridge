@@ -1,0 +1,265 @@
+#!/usr/bin/env node
+
+/**
+ * Claude Desktop MCP Bridge Configuration Validator
+ *
+ * Validates Claude Desktop configuration and checks for common issues.
+ * Run this before setting up the MCP bridge to catch configuration problems early.
+ */
+
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Color codes for terminal output
+const colors = {
+  reset: '\x1b[0m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  blue: '\x1b[34m',
+  cyan: '\x1b[36m',
+  bold: '\x1b[1m'
+};
+
+function log(color, message) {
+  console.log(`${color}${message}${colors.reset}`);
+}
+
+function logSuccess(message) {
+  log(`${colors.green}✅ `, message);
+}
+
+function logError(message) {
+  log(`${colors.red}❌ `, message);
+}
+
+function logWarning(message) {
+  log(`${colors.yellow}⚠️  `, message);
+}
+
+function logInfo(message) {
+  log(`${colors.blue}ℹ️  `, message);
+}
+
+function logHeader(message) {
+  log(`${colors.bold}${colors.cyan}`, `\n=== ${message} ===`);
+}
+
+/**
+ * Get Claude Desktop config file path based on the operating system
+ */
+function getClaudeConfigPath() {
+  const platform = os.platform();
+  const homeDir = os.homedir();
+
+  switch (platform) {
+    case 'darwin': // macOS
+      return path.join(homeDir, 'Library/Application Support/Claude/claude_desktop_config.json');
+    case 'win32': // Windows
+      return path.join(homeDir, 'AppData/Roaming/Claude/claude_desktop_config.json');
+    case 'linux': // Linux
+      return path.join(homeDir, '.config/Claude/claude_desktop_config.json');
+    default:
+      throw new Error(`Unsupported platform: ${platform}`);
+  }
+}
+
+/**
+ * Check if required files exist in the project directory
+ */
+function validateProjectStructure() {
+  logHeader('Project Structure Validation');
+
+  const projectRoot = path.resolve(__dirname, '..');
+  const requiredFiles = [
+    'dist/filesystem-bridge/server.js',
+    'dist/shell-bridge/server.js',
+    'dist/skills-bridge/server.js',
+    'package.json',
+  ];
+
+  let allValid = true;
+
+  for (const file of requiredFiles) {
+    const filePath = path.join(projectRoot, file);
+    if (fs.existsSync(filePath)) {
+      logSuccess(`Found: ${file}`);
+    } else {
+      logError(`Missing: ${file}`);
+      allValid = false;
+    }
+  }
+
+  if (!allValid) {
+    logWarning('Some required files are missing. Run "npm run build" to build the project.');
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Validate Claude Desktop configuration file
+ */
+function validateClaudeConfig() {
+  logHeader('Claude Desktop Configuration Validation');
+
+  const configPath = getClaudeConfigPath();
+  logInfo(`Config location: ${configPath}`);
+
+  // Check if config file exists
+  if (!fs.existsSync(configPath)) {
+    logWarning('Claude Desktop config file does not exist yet.');
+    logInfo('This is normal if you have not set up MCP servers before.');
+    return generateSampleConfig();
+  }
+
+  // Read and parse config
+  let config;
+  try {
+    const configContent = fs.readFileSync(configPath, 'utf-8');
+    config = JSON.parse(configContent);
+    logSuccess('Config file exists and is valid JSON');
+  } catch (error) {
+    logError(`Config file is invalid JSON: ${error.message}`);
+    return false;
+  }
+
+  // Validate MCP servers section
+  if (!config.mcpServers) {
+    logWarning('No mcpServers section found in config');
+    return false;
+  }
+
+  const projectRoot = path.resolve(__dirname, '..');
+  const expectedServers = ['filesystem-bridge', 'shell-bridge', 'skills-bridge'];
+  let validServers = 0;
+
+  for (const serverName of expectedServers) {
+    const serverConfig = config.mcpServers[serverName];
+    if (!serverConfig) {
+      logWarning(`Server "${serverName}" not configured`);
+      continue;
+    }
+
+    logInfo(`Checking "${serverName}" configuration...`);
+
+    // Validate command
+    if (!serverConfig.command || serverConfig.command !== 'node') {
+      logWarning(`Server "${serverName}": command should be "node"`);
+      continue;
+    }
+
+    // Validate args (script path)
+    if (!serverConfig.args || serverConfig.args.length === 0) {
+      logError(`Server "${serverName}": missing args (script path)`);
+      continue;
+    }
+
+    const scriptPath = serverConfig.args[0];
+
+    // Check if path is absolute
+    if (!path.isAbsolute(scriptPath)) {
+      logError(`Server "${serverName}": script path must be absolute, got: ${scriptPath}`);
+      continue;
+    }
+
+    // Check if script file exists
+    if (!fs.existsSync(scriptPath)) {
+      logError(`Server "${serverName}": script file does not exist: ${scriptPath}`);
+      logInfo('Make sure the path points to the built .js file in the dist/ directory');
+      continue;
+    }
+
+    // Validate environment variables
+    if (serverName === 'filesystem-bridge' && serverConfig.env) {
+      if (!serverConfig.env.ALLOWED_PATHS) {
+        logWarning(`Server "${serverName}": consider setting ALLOWED_PATHS environment variable`);
+      }
+    }
+
+    if (serverName === 'shell-bridge' && serverConfig.env) {
+      if (!serverConfig.env.BLOCKED_COMMANDS) {
+        logWarning(`Server "${serverName}": consider setting BLOCKED_COMMANDS for security`);
+      }
+    }
+
+    logSuccess(`Server "${serverName}" configuration is valid`);
+    validServers++;
+  }
+
+  logInfo(`✅ ${validServers}/${expectedServers.length} servers configured correctly`);
+  return validServers === expectedServers.length;
+}
+
+/**
+ * Generate sample configuration file
+ */
+function generateSampleConfig() {
+  logHeader('Sample Configuration Generation');
+
+  const projectRoot = path.resolve(__dirname, '..');
+  const platform = os.platform();
+
+  // Convert Windows paths to forward slashes for better JSON compatibility
+  const normalizedProjectRoot = projectRoot.replace(/\/g, "/");
+
+  const sampleConfig = {
+    mcpServers: {
+      'filesystem-bridge': {
+        command: 'node',
+        args: [
+          `${normalizedProjectRoot}/dist/filesystem-bridge/server.js`
+        ],
+        env: {
+          ALLOWED_PATHS: platform === 'win32'
+            ? 'C:/Users/techai/projects,C:/Users/techai/Documents,C:/Users/techai/claude-skills'
+            : '/Users/yourname/projects,/Users/yourname/Documents,/home/yourname/.claude/skills',
+          READ_ONLY: 'false',
+          MAX_FILE_SIZE: '10485760'
+        }
+      },
+      'shell-bridge': {
+        command: 'node',
+        args: [
+          `${normalizedProjectRoot}/dist/shell-bridge/server.js`
+        ],
+        env: {
+          TIMEOUT: '120000',
+          BLOCKED_COMMANDS: 'rm,rmdir,del,format,fdisk,mkfs,dd,shutdown,reboot'
+        }
+      },
+      'skills-bridge': {
+        command: 'node',
+        args: [
+          `${normalizedProjectRoot}/dist/skills-bridge/server.js`
+        ],
+        env: {
+          SKILLS_PATH: '~/.claude/skills/',
+          TIMEOUT: '60000'
+        }
+      }
+    }
+  };
+
+  const configPath = getClaudeConfigPath();
+  const outputPath = path.join(path.dirname(configPath), 'claude_desktop_config_sample.json');
+
+  try {
+    // Create directory if it doesn't exist
+    const configDir = path.dirname(outputPath);
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+
+    // Write sample config
+    fs.writeFileSync(outputPath, JSON.stringify(sampleConfig, null, 2));
+    logSuccess(`Sample configuration written to: ${outputPath}`);
+
+    logInfo('\n📋 Next steps:'

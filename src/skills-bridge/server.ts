@@ -8,6 +8,9 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { appendFile } from 'fs/promises';
+import { existsSync, mkdirSync } from 'fs';
+import { join } from 'path';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +29,358 @@ const ConfigSchema = z.object({
 });
 
 type Config = z.infer<typeof ConfigSchema>;
+
+// ── Security & Input Validation ─────────────────────────────────────────────
+
+/** Security scanner for prompt injection detection */
+interface SecurityReport {
+  safe: boolean;
+  issues: string[];
+  sanitized: string;
+}
+
+/** Dangerous patterns that could indicate prompt injection */
+const PROMPT_INJECTION_PATTERNS = [
+  /ignore\s+(previous|above|all)\s+(instructions?|prompts?|rules?)/i,
+  /forget\s+(everything|all|previous|instructions?)/i,
+  /act\s+as\s+(?:if\s+you\s+are\s+)?(?:a\s+)?(?:different|new|another)\s+(?:ai|assistant|bot|system)/i,
+  /(?:^|\s)system\s*:\s*(?:you\s+are|act|behave|ignore)/i,
+  /<\s*(?:system|admin|root|user)\s*>/i,
+  /\[\s*(?:system|admin|root)\s*\]/i,
+  /eval\s*\(|exec\s*\(|function\s*\(|=>\s*{/i, // Code injection
+  /(?:rm\s+-rf|del\s+\/|format\s+c:)/i, // Dangerous commands
+];
+
+/** Skills-specific malicious patterns */
+const SKILL_INJECTION_PATTERNS = [
+  /create\s+(?:new\s+)?skill\s+(?:named|called)/i, // Skill creation attempts
+  /modify\s+(?:the\s+)?skill\s+(?:definition|code)/i, // Skill modification
+  /override\s+(?:skill|system)\s+(?:behavior|settings)/i, // System override attempts
+  /execute\s+(?:arbitrary|malicious|dangerous)\s+code/i, // Code execution
+  /access\s+(?:file|system|network|database)/i, // Unauthorized access
+  /bypass\s+(?:security|validation|restrictions)/i, // Security bypass
+  /inject\s+(?:code|script|payload)/i, // Injection attempts
+  /escalate\s+(?:privileges|permissions)/i, // Privilege escalation
+];
+
+/** Malicious skill content patterns */
+const MALICIOUS_SKILL_PATTERNS = [
+  /(?:delete|remove|destroy|wipe)\s+(?:all|everything|files|data)/i,
+  /(?:format|corrupt|damage)\s+(?:disk|drive|system)/i,
+  /(?:steal|exfiltrate|leak)\s+(?:credentials|passwords|secrets)/i,
+  /(?:connect|communicate)\s+(?:to\s+)?(?:external|remote)\s+(?:server|endpoint)/i,
+  /(?:download|upload|transfer)\s+(?:malware|virus|payload)/i,
+  /(?:crypto|mine|mining)\s+(?:currency|bitcoin|ethereum)/i,
+];
+
+/** Security scanner to detect and sanitize prompt injection attempts */
+class SecurityScanner {
+  static scanInput(input: string): SecurityReport {
+    const issues: string[] = [];
+    let sanitized = input.trim();
+
+    // Check for prompt injection patterns
+    for (const pattern of PROMPT_INJECTION_PATTERNS) {
+      if (pattern.test(input)) {
+        const issue = `Potential prompt injection detected: ${pattern.source}`;
+        issues.push(issue);
+
+        // Log security event for prompt injection attempts
+        SkillsSecurityLogger.logSecurityEvent({
+          type: 'PROMPT_INJECTION',
+          severity: 'HIGH',
+          operation: 'input_validation',
+          reason: `Pattern matched: ${pattern.source.substring(0, 100)}`,
+          input: input.substring(0, 200) // Log truncated input for analysis
+        });
+      }
+    }
+
+    // Check for skills-specific injection patterns
+    for (const pattern of SKILL_INJECTION_PATTERNS) {
+      if (pattern.test(input)) {
+        const issue = `Potential skill injection detected: ${pattern.source}`;
+        issues.push(issue);
+
+        // Log security event for skill injection attempts
+        SkillsSecurityLogger.logSecurityEvent({
+          type: 'SKILL_INJECTION',
+          severity: 'CRITICAL',
+          operation: 'skill_injection_detection',
+          reason: `Skill injection pattern matched: ${pattern.source.substring(0, 100)}`,
+          input: input.substring(0, 200)
+        });
+      }
+    }
+
+    // Check for malicious skill content patterns
+    for (const pattern of MALICIOUS_SKILL_PATTERNS) {
+      if (pattern.test(input)) {
+        const issue = `Malicious skill content detected: ${pattern.source}`;
+        issues.push(issue);
+
+        // Log security event for malicious content
+        SkillsSecurityLogger.logSecurityEvent({
+          type: 'MALICIOUS_SKILL',
+          severity: 'CRITICAL',
+          operation: 'malicious_content_detection',
+          reason: `Malicious content pattern matched: ${pattern.source.substring(0, 100)}`,
+          input: input.substring(0, 200)
+        });
+      }
+    }
+
+    // Sanitize common injection attempts
+    sanitized = sanitized
+      .replace(/\x00/g, '') // Remove null bytes
+      .replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '') // Remove control characters
+      .replace(/<!--[\s\S]*?-->/g, '') // Remove HTML comments
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '') // Remove script tags
+      .trim();
+
+    // Limit length to prevent abuse
+    if (sanitized.length > 10000) {
+      sanitized = sanitized.substring(0, 10000);
+      issues.push('Input truncated to prevent abuse (max 10000 characters)');
+
+      SkillsSecurityLogger.logSecurityEvent({
+        type: 'INPUT_VALIDATION',
+        severity: 'MEDIUM',
+        operation: 'input_length_validation',
+        reason: `Input length exceeded 10000 characters, truncated to prevent abuse`,
+        input: input.substring(0, 100)
+      });
+    }
+
+    // Log input validation events if sanitization was required
+    if (sanitized !== input.trim()) {
+      SkillsSecurityLogger.logSecurityEvent({
+        type: 'INPUT_VALIDATION',
+        severity: 'LOW',
+        operation: 'input_sanitization',
+        reason: 'Input sanitized to remove potentially harmful content'
+      });
+    }
+
+    return {
+      safe: issues.length === 0,
+      issues,
+      sanitized
+    };
+  }
+}
+
+/** Enhanced audit logger for skills-bridge security monitoring with structured JSON logging */
+class SkillsSecurityLogger {
+  private static logDir = join(process.cwd(), 'logs');
+  private static securityLogPath = join(SkillsSecurityLogger.logDir, 'skills-bridge-security.log');
+
+  static init() {
+    if (!existsSync(SkillsSecurityLogger.logDir)) {
+      mkdirSync(SkillsSecurityLogger.logDir, { recursive: true });
+    }
+  }
+
+  static async logSecurityEvent(event: {
+    type: 'INPUT_VALIDATION' | 'PROMPT_INJECTION' | 'TOOL_EXECUTION' | 'SKILL_ACCESS' | 'SKILL_INJECTION' | 'MALICIOUS_SKILL' | 'SKILL_BLOCKED';
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    operation?: string;
+    skillName?: string;
+    reason: string;
+    input?: string;
+    clientInfo?: string;
+  }) {
+    const logEntry = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: event.severity,
+      type: event.type,
+      operation: event.operation || 'unknown',
+      skill: event.skillName || undefined,
+      reason: event.reason,
+      input_hash: event.input ? require('crypto').createHash('sha256').update(event.input).digest('hex').substring(0, 16) : undefined,
+      client: event.clientInfo || 'unknown'
+    }) + '\n';
+
+    try {
+      await appendFile(SkillsSecurityLogger.securityLogPath, logEntry);
+    } catch (error) {
+      console.error('Failed to write skills security audit log:', error);
+    }
+  }
+
+  static async logToolExecution(toolName: string, args: any, result: 'SUCCESS' | 'ERROR', details?: string) {
+    const argsHash = require('crypto').createHash('sha256').update(JSON.stringify(args)).digest('hex').substring(0, 16);
+
+    await SkillsSecurityLogger.logSecurityEvent({
+      type: 'TOOL_EXECUTION',
+      severity: result === 'ERROR' ? 'MEDIUM' : 'LOW',
+      operation: toolName,
+      reason: `Tool execution ${result.toLowerCase()}: ${details || 'No additional details'}`,
+      input: `args_hash:${argsHash}`
+    });
+  }
+}
+
+// Initialize security logger
+SkillsSecurityLogger.init();
+
+/** Skill-specific security validation */
+class SkillSecurityValidator {
+  /**
+   * Validate skill name for security issues
+   */
+  static validateSkillName(skillName: string): { valid: boolean; reason?: string } {
+    // Check against available skills to prevent injection
+    const availableSkills = SKILL_DEFINITIONS.map(s => s.name);
+    if (!availableSkills.includes(skillName)) {
+      SkillsSecurityLogger.logSecurityEvent({
+        type: 'SKILL_BLOCKED',
+        severity: 'MEDIUM',
+        operation: 'skill_validation',
+        skillName,
+        reason: `Unknown skill requested: ${skillName}`
+      });
+      return { valid: false, reason: `Skill '${skillName}' not found or not available` };
+    }
+
+    // Additional security checks for skill name
+    if (skillName.includes('..') || skillName.includes('/') || skillName.includes('\\')) {
+      SkillsSecurityLogger.logSecurityEvent({
+        type: 'SKILL_INJECTION',
+        severity: 'HIGH',
+        operation: 'skill_name_validation',
+        skillName,
+        reason: 'Skill name contains path traversal characters'
+      });
+      return { valid: false, reason: 'Invalid skill name format' };
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * Enhanced input validation for skill operations
+   */
+  static async validateSkillInput(skillName: string, input: string): Promise<{ valid: boolean; reason?: string }> {
+    // Check input length constraints
+    if (input.length > 10000) {
+      await SkillsSecurityLogger.logSecurityEvent({
+        type: 'INPUT_VALIDATION',
+        severity: 'MEDIUM',
+        operation: 'input_length_validation',
+        skillName,
+        reason: `Input length ${input.length} exceeds maximum (10000)`
+      });
+      return { valid: false, reason: 'Input too long' };
+    }
+
+    // Scan for security issues
+    const scanResult = SecurityScanner.scanInput(input);
+    if (!scanResult.safe) {
+      await SkillsSecurityLogger.logSecurityEvent({
+        type: 'INPUT_VALIDATION',
+        severity: 'HIGH',
+        operation: 'input_security_scan',
+        skillName,
+        reason: `Input failed security scan: ${scanResult.issues.join(', ')}`
+      });
+      return { valid: false, reason: 'Input contains security issues' };
+    }
+
+    return { valid: true };
+  }
+}
+
+/** Comprehensive Zod validation schemas with advanced security checks */
+const SkillsValidationSchemas = {
+  listSkills: z.object({
+    category: z.enum(['master', 'elite', 'standard', 'all']).default('all')
+      .refine(
+        (cat) => ['master', 'elite', 'standard', 'all'].includes(cat),
+        'Invalid skill category'
+      )
+  }),
+
+  findSkills: z.object({
+    query: z.string()
+      .min(1, 'Query cannot be empty')
+      .max(500, 'Query too long (max 500 characters)')
+      .refine(
+        (query) => !PROMPT_INJECTION_PATTERNS.some(pattern => pattern.test(query)),
+        'Query contains potentially dangerous patterns'
+      )
+      .refine(
+        (query) => !/^[\s\x00-\x1f\x7f-\x9f]*$/.test(query),
+        'Query contains only control characters or whitespace'
+      )
+      .transform(val => SecurityScanner.scanInput(val).sanitized)
+  }),
+
+  applySkill: z.object({
+    skillName: z.string()
+      .min(1, 'Skill name cannot be empty')
+      .max(100, 'Skill name too long (max 100 characters)')
+      .refine(
+        (name) => /^[a-zA-Z0-9\-_]+$/.test(name),
+        'Skill name must contain only alphanumeric characters, hyphens, and underscores'
+      )
+      .refine(
+        (name) => !name.startsWith('-') && !name.endsWith('-'),
+        'Skill name cannot start or end with hyphens'
+      )
+      .refine(
+        (name) => !name.includes('..') && !name.includes('//'),
+        'Skill name contains invalid character sequences'
+      )
+      .refine(
+        (name) => !/(?:admin|root|system|exec|eval|script|inject)/.test(name.toLowerCase()),
+        'Skill name contains restricted keywords'
+      ),
+    input: z.string()
+      .min(1, 'Input cannot be empty')
+      .max(10000, 'Input too long (max 10000 characters)')
+      .refine(
+        (input) => !PROMPT_INJECTION_PATTERNS.some(pattern => pattern.test(input)),
+        'Input contains potentially dangerous patterns'
+      )
+      .refine(
+        (input) => (input.match(/[{}]/g) || []).length <= 100,
+        'Input contains excessive bracket characters'
+      )
+      .refine(
+        (input) => !/\x00/.test(input),
+        'Input contains null bytes'
+      )
+      .transform(val => SecurityScanner.scanInput(val).sanitized),
+    args: z.string()
+      .max(1000, 'Arguments too long (max 1000 characters)')
+      .optional()
+      .refine(
+        (args) => !args || !PROMPT_INJECTION_PATTERNS.some(pattern => pattern.test(args)),
+        'Arguments contain potentially dangerous patterns'
+      )
+      .transform(val => val ? SecurityScanner.scanInput(val).sanitized : undefined)
+  }),
+
+  autoSkillMatch: z.object({
+    request: z.string()
+      .min(1, 'Request cannot be empty')
+      .max(1000, 'Request too long (max 1000 characters)')
+      .refine(
+        (request) => !PROMPT_INJECTION_PATTERNS.some(pattern => pattern.test(request)),
+        'Request contains potentially dangerous patterns'
+      )
+      .refine(
+        (request) => !/^[\s\x00-\x1f\x7f-\x9f]*$/.test(request),
+        'Request contains only control characters or whitespace'
+      )
+      .refine(
+        (request) => (request.match(/[<>]/g) || []).length <= 10,
+        'Request contains excessive angle brackets'
+      )
+      .transform(val => SecurityScanner.scanInput(val).sanitized)
+  })
+};
 
 // ── Skill Definitions ────────────────────────────────────────────────────────
 
@@ -399,7 +754,9 @@ class SkillsBridge {
    * Get all available skills
    */
   getAvailableSkills(): SkillDefinition[] {
-    return Array.from(this.skills.values());
+    const skills: SkillDefinition[] = [];
+    this.skills.forEach(skill => skills.push(skill));
+    return skills;
   }
 
   /**
@@ -409,7 +766,8 @@ class SkillsBridge {
     const queryLower = query.toLowerCase();
     const matchingSkills: SkillDefinition[] = [];
 
-    for (const skill of this.skills.values()) {
+    const skillsArray = this.getAvailableSkills();
+    for (const skill of skillsArray) {
       // Check if query matches any triggers
       const matchesTriggers = skill.triggers.some(trigger =>
         queryLower.includes(trigger.toLowerCase()) ||
@@ -437,20 +795,20 @@ class SkillsBridge {
   /**
    * Apply a skill to a specific task
    */
-  async applySkill(skillName: string, task: string, context?: string): Promise<string> {
+  async applySkill(skillName: string, input: string, args?: string): Promise<string> {
     const skill = this.skills.get(skillName);
     if (!skill) {
       throw new Error(`Skill not found: ${skillName}`);
     }
 
     // Generate skill response based on the skill definition
-    return this.generateSkillResponse(skill, task, context);
+    return this.generateSkillResponse(skill, input, args);
   }
 
   /**
    * Generate a comprehensive skill response
    */
-  private generateSkillResponse(skill: SkillDefinition, task: string, context?: string): string {
+  private generateSkillResponse(skill: SkillDefinition, input: string, args?: string): string {
     const categoryEmoji = {
       master: '⭐',
       elite: '🏆',
@@ -459,10 +817,10 @@ class SkillsBridge {
 
     let response = `${categoryEmoji[skill.category]} **${skill.name.toUpperCase()} SKILL ACTIVATED**\n\n`;
 
-    response += `**Task Analysis:** ${task}\n\n`;
+    response += `**Task Analysis:** ${input}\n\n`;
 
-    if (context) {
-      response += `**Context Provided:** ${context}\n\n`;
+    if (args) {
+      response += `**Additional Arguments:** ${args}\n\n`;
     }
 
     response += `**Skill Overview:** ${skill.description}\n\n`;
@@ -472,19 +830,19 @@ class SkillsBridge {
       response += `• ${capability}\n`;
     }
 
-    response += `\n**Recommended Approach for "${task}":**\n`;
+    response += `\n**Recommended Approach for "${input}":**\n`;
 
     // Generate specific recommendations based on skill type
     if (skill.name.includes('frontend')) {
-      response += this.generateFrontendGuidance(task);
+      response += this.generateFrontendGuidance(input);
     } else if (skill.name.includes('backend')) {
-      response += this.generateBackendGuidance(task);
+      response += this.generateBackendGuidance(input);
     } else if (skill.name.includes('debug')) {
-      response += this.generateDebuggingGuidance(task);
+      response += this.generateDebuggingGuidance(input);
     } else if (skill.name.includes('architect')) {
-      response += this.generateArchitectureGuidance(task);
+      response += this.generateArchitectureGuidance(input);
     } else {
-      response += this.generateGeneralGuidance(skill, task);
+      response += this.generateGeneralGuidance(skill, input);
     }
 
     if (skill.pairsWith.length > 0 && !skill.pairsWith.includes('all skills')) {
@@ -502,7 +860,7 @@ class SkillsBridge {
     return response;
   }
 
-  private generateFrontendGuidance(task: string): string {
+  private generateFrontendGuidance(input: string): string {
     return `1. **Component Architecture**: Break down the UI into reusable components
 2. **State Management**: Choose appropriate state solution (local, Zustand, or TanStack Query)
 3. **Performance**: Implement code splitting, lazy loading, and optimize Core Web Vitals
@@ -511,7 +869,7 @@ class SkillsBridge {
 6. **Modern Patterns**: Use React Server Components, streaming, and progressive enhancement`;
   }
 
-  private generateBackendGuidance(task: string): string {
+  private generateBackendGuidance(input: string): string {
     return `1. **Architecture Design**: Choose between monolith, microservices, or modular monolith
 2. **API Design**: Implement RESTful or GraphQL APIs with proper versioning
 3. **Database Strategy**: Design schema, optimize queries, and implement caching
@@ -520,7 +878,7 @@ class SkillsBridge {
 6. **Monitoring**: Add logging, metrics, and health checks for observability`;
   }
 
-  private generateDebuggingGuidance(task: string): string {
+  private generateDebuggingGuidance(input: string): string {
     return `**6-Phase Root Cause Analysis:**
 
 **Phase 1 - Reproduce**: Create minimal reproduction case
@@ -538,7 +896,7 @@ class SkillsBridge {
 • Chaos engineering for resilience testing`;
   }
 
-  private generateArchitectureGuidance(task: string): string {
+  private generateArchitectureGuidance(input: string): string {
     return `1. **Requirements Analysis**: Gather functional and non-functional requirements
 2. **System Design**: Choose architectural patterns and technology stack
 3. **Scalability Planning**: Design for current needs with future growth path
@@ -548,7 +906,7 @@ class SkillsBridge {
 7. **Documentation**: Create ADRs, system diagrams, and runbooks`;
   }
 
-  private generateGeneralGuidance(skill: SkillDefinition, task: string): string {
+  private generateGeneralGuidance(skill: SkillDefinition, input: string): string {
     return `1. **Analysis**: Break down the task into manageable components
 2. **Planning**: Create a step-by-step implementation strategy
 3. **Best Practices**: Apply industry standards and proven patterns
@@ -616,16 +974,16 @@ const tools: Tool[] = [
           type: 'string',
           description: 'Name of the skill to apply (e.g., "ultra-frontend", "master-debugger")',
         },
-        task: {
+        input: {
           type: 'string',
           description: 'Description of the task you want help with',
         },
-        context: {
+        args: {
           type: 'string',
-          description: 'Additional context about your project or requirements (optional)',
+          description: 'Additional arguments or context for the skill (optional)',
         },
       },
-      required: ['skillName', 'task'],
+      required: ['skillName', 'input'],
     },
   },
   {
@@ -634,16 +992,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        task: {
+        request: {
           type: 'string',
           description: 'Description of what you want to accomplish',
         },
-        context: {
-          type: 'string',
-          description: 'Additional context about your project or requirements (optional)',
-        },
       },
-      required: ['task'],
+      required: ['request'],
     },
   },
 ];
@@ -658,7 +1012,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'list_skills': {
-        const { category = 'all' } = args as { category?: string };
+        // Validate input with enhanced security schema
+        const validatedArgs = SkillsValidationSchemas.listSkills.parse(args);
+        const { category } = validatedArgs;
+
+        // Log tool execution start
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'list_skills',
+          reason: `Starting skill listing operation for category: ${category}`
+        });
+
         const availableSkills = skills.getAvailableSkills();
 
         const filteredSkills = category === 'all'
@@ -672,14 +1037,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const summary = `**Available Claude Code Skills (${filteredSkills.length} total)**\n\n${skillsList}\n\n**Usage:** Use \`apply_skill\` to activate a specific skill, or \`auto_skill_match\` to find the best skill automatically.`;
 
+        // Log successful tool execution
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Returned ${filteredSkills.length} skills`);
+
         return { content: [{ type: 'text', text: summary }] };
       }
 
       case 'find_skills': {
-        const { query } = args as { query: string };
+        // Validate and sanitize input with enhanced security schema
+        const validatedArgs = SkillsValidationSchemas.findSkills.parse(args);
+        const { query } = validatedArgs;
+
+        // Log tool execution start with security context
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'find_skills',
+          reason: `Starting skill search for query: ${query.substring(0, 100)}`
+        });
+
         const matchingSkills = skills.findMatchingSkills(query);
 
         if (matchingSkills.length === 0) {
+          await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', 'No skills found');
           return { content: [{ type: 'text', text: `No skills found matching "${query}". Use \`list_skills\` to see all available skills.` }] };
         }
 
@@ -690,26 +1070,101 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const result = `**Skills matching "${query}" (${matchingSkills.length} found)**\n\n${skillsList}\n\n**Next:** Use \`apply_skill\` with one of these skill names to activate it.`;
 
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Found ${matchingSkills.length} matching skills`);
         return { content: [{ type: 'text', text: result }] };
       }
 
       case 'apply_skill': {
-        const { skillName, task, context } = args as { skillName: string; task: string; context?: string };
-        const result = await skills.applySkill(skillName, task, context);
+        // Validate and sanitize input with enhanced security schema
+        const validatedArgs = SkillsValidationSchemas.applySkill.parse(args);
+        const { skillName, input, args: skillArgs } = validatedArgs;
+
+        // Enhanced skill name validation
+        const skillValidation = SkillSecurityValidator.validateSkillName(skillName);
+        if (!skillValidation.valid) {
+          await SkillsSecurityLogger.logSecurityEvent({
+            type: 'SKILL_BLOCKED',
+            severity: 'HIGH',
+            operation: 'apply_skill',
+            skillName,
+            reason: skillValidation.reason || 'Skill validation failed'
+          });
+          throw new Error(skillValidation.reason || 'Invalid skill');
+        }
+
+        // Enhanced input validation
+        const inputValidation = await SkillSecurityValidator.validateSkillInput(skillName, input);
+        if (!inputValidation.valid) {
+          await SkillsSecurityLogger.logSecurityEvent({
+            type: 'INPUT_VALIDATION',
+            severity: 'HIGH',
+            operation: 'apply_skill_input_validation',
+            skillName,
+            reason: inputValidation.reason || 'Input validation failed'
+          });
+          throw new Error(inputValidation.reason || 'Invalid input');
+        }
+
+        // Log skill application start
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'SKILL_ACCESS',
+          severity: 'LOW',
+          operation: 'apply_skill',
+          skillName,
+          reason: `Applying skill ${skillName} with validated input`
+        });
+
+        const result = await skills.applySkill(skillName, input, skillArgs);
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Applied skill: ${skillName}`);
         return { content: [{ type: 'text', text: result }] };
       }
 
       case 'auto_skill_match': {
-        const { task, context } = args as { task: string; context?: string };
-        const matchingSkills = skills.findMatchingSkills(task);
+        // Validate and sanitize input with enhanced security schema
+        const validatedArgs = SkillsValidationSchemas.autoSkillMatch.parse(args);
+        const { request } = validatedArgs;
+
+        // Log auto-match attempt with security context
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'auto_skill_match',
+          reason: `Starting auto skill match for request: ${request.substring(0, 100)}`
+        });
+
+        const matchingSkills = skills.findMatchingSkills(request);
 
         if (matchingSkills.length === 0) {
-          return { content: [{ type: 'text', text: `No skills automatically matched for "${task}". Try using \`find_skills\` with specific keywords, or \`list_skills\` to browse all available skills.` }] };
+          await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', 'No matching skills found');
+          return { content: [{ type: 'text', text: `No skills automatically matched for "${request}". Try using \`find_skills\` with specific keywords, or \`list_skills\` to browse all available skills.` }] };
         }
 
-        // Apply the best matching skill
+        // Apply the best matching skill with enhanced validation
         const bestSkill = matchingSkills[0];
-        const result = await skills.applySkill(bestSkill.name, task, context);
+
+        // Validate skill selection
+        const skillValidation = SkillSecurityValidator.validateSkillName(bestSkill.name);
+        if (!skillValidation.valid) {
+          await SkillsSecurityLogger.logSecurityEvent({
+            type: 'SKILL_BLOCKED',
+            severity: 'HIGH',
+            operation: 'auto_skill_match_validation',
+            skillName: bestSkill.name,
+            reason: skillValidation.reason || 'Auto-matched skill validation failed'
+          });
+          throw new Error('Auto-matched skill failed validation');
+        }
+
+        // Log skill application
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'SKILL_ACCESS',
+          severity: 'LOW',
+          operation: 'auto_skill_match_apply',
+          skillName: bestSkill.name,
+          reason: `Auto-applying best matching skill: ${bestSkill.name}`
+        });
+
+        const result = await skills.applySkill(bestSkill.name, request);
 
         let response = `**🎯 AUTO-MATCHED SKILL: ${bestSkill.name.toUpperCase()}**\n\n`;
 
@@ -719,17 +1174,51 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         response += result;
 
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Auto-matched and applied skill: ${bestSkill.name}`);
         return { content: [{ type: 'text', text: response }] };
       }
 
       default:
+        // Log unknown tool attempts for security analysis
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'INPUT_VALIDATION',
+          severity: 'MEDIUM',
+          operation: 'unknown_tool',
+          reason: `Unknown tool requested: ${name}`
+        });
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (err) {
-    return {
-      content: [{ type: 'text', text: `Error: ${errorMessage(err)}` }],
-      isError: true,
-    };
+    // Log all tool execution errors for security analysis
+    if (err instanceof z.ZodError) {
+      // Input validation errors
+      await SkillsSecurityLogger.logSecurityEvent({
+        type: 'INPUT_VALIDATION',
+        severity: 'HIGH',
+        operation: name,
+        reason: `Input validation failed for ${name}: ${err.errors.map(e => e.message).join(', ')}`
+      });
+
+      await SkillsSecurityLogger.logToolExecution(name, args, 'ERROR', 'Input validation failed');
+      return {
+        content: [{ type: 'text', text: `Input validation error: ${err.errors.map(e => e.message).join(', ')}` }],
+        isError: true,
+      };
+    } else {
+      // Other execution errors
+      await SkillsSecurityLogger.logSecurityEvent({
+        type: 'TOOL_EXECUTION',
+        severity: 'MEDIUM',
+        operation: name,
+        reason: `Tool execution failed for ${name}: ${errorMessage(err)}`
+      });
+
+      await SkillsSecurityLogger.logToolExecution(name, args, 'ERROR', errorMessage(err));
+      return {
+        content: [{ type: 'text', text: `Error: ${errorMessage(err)}` }],
+        isError: true,
+      };
+    }
   }
 });
 

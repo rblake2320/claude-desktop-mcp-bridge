@@ -9,6 +9,8 @@
     "dev": "tsc --watch",
     "test": "jest",
     "lint": "eslint src/**/*.ts",
+    "validate": "node scripts/validate-config.js",
+    "setup": "npm install && npm run build && npm run validate",
     "start:filesystem": "node dist/filesystem-bridge/server.js",
     "start:shell": "node dist/shell-bridge/server.js",
     "start:skills": "node dist/skills-bridge/server.js",

@@ -764,6 +764,42 @@ const SKILL_DEFINITIONS: LegacySkillDefinition[] = [
       'Incident response'
     ],
     pairsWith: ['devops-cicd', 'api-development', 'cloud-infrastructure']
+  },
+
+  // Skills added based on real deployment lessons learned
+  {
+    name: 'mcp-testing',
+    description: 'MCP server integration testing: protocol validation, stdio stream verification, Windows path handling, config validation, and end-to-end bridge testing.',
+    category: 'standard',
+    triggers: ['mcp', 'mcp-server', 'mcp-testing', 'bridge-testing', 'stdio', 'json-rpc', 'claude-desktop', 'protocol-validation'],
+    capabilities: [
+      'MCP JSON-RPC protocol compliance testing (stdout purity, message framing)',
+      'stdio stream validation (detect console.log pollution, ensure only JSON on stdout)',
+      'Windows path validation testing (drive letters, backslashes, UNC paths)',
+      'Claude Desktop config validation (server entries, env vars, arg paths)',
+      'spawn/exec behavior testing (shell:true vs shell:false, .cmd resolution)',
+      'End-to-end tool invocation testing via stdin JSON-RPC calls',
+      'Security regex validation (ensure patterns allow valid OS-specific paths)',
+      'MCP server lifecycle testing (startup, initialization, graceful shutdown)'
+    ],
+    pairsWith: ['test-automation', 'master-debugger', 'windows-deployment']
+  },
+  {
+    name: 'windows-deployment',
+    description: 'Windows-specific deployment, path handling, process management, and environment configuration for Node.js and Python applications.',
+    category: 'standard',
+    triggers: ['windows', 'windows-path', 'cmd', 'powershell', 'batch', 'windows-service', 'path-separator', 'drive-letter'],
+    capabilities: [
+      'Windows path normalization (backslash vs forward-slash, drive letters, UNC)',
+      'Process spawning on Windows (shell:true for .cmd/.bat, ComSpec, builtins)',
+      'Windows environment variables (PATH, APPDATA, LOCALAPPDATA resolution)',
+      'Service management (Windows services, Task Scheduler, startup scripts)',
+      'Registry and configuration file management',
+      'Windows-specific security (ACLs, UAC, execution policies)',
+      'Cross-platform compatibility patterns (path.sep, os.platform() guards)',
+      'Debugging Windows-specific failures (ENOENT from missing shell, path blocked by regex)'
+    ],
+    pairsWith: ['mcp-testing', 'devops-cicd', 'master-debugger']
   }
 ];
 
@@ -917,45 +953,121 @@ class SkillsBridge {
   }
 
   /**
-   * Find skills matching triggers/keywords (unified search across legacy and dynamic)
+   * Find skills matching triggers/keywords with weighted relevance scoring.
+   *
+   * Scoring weights:
+   *   - Exact trigger word found in query: +10 per trigger
+   *   - Skill name token found in query:   +8  per token
+   *   - Capability keyword found in query: +2  per capability
+   *   - Description word overlap:          +1  per word (capped at 5)
+   *
+   * Only skills with score > 0 are returned, sorted descending by score.
    */
   findMatchingSkills(query: string): SkillDefinition[] {
     const queryLower = query.toLowerCase();
-    const matchingSkills: SkillDefinition[] = [];
+    const queryWords = queryLower.split(/[\s,.\-_/]+/).filter(w => w.length > 2);
+    const scored: Array<{ skill: SkillDefinition; score: number }> = [];
 
     const skillsArray = this.getAvailableSkills();
     for (const skill of skillsArray) {
-      // Check if query matches any triggers
-      const matchesTriggers = skill.triggers.some(trigger =>
-        queryLower.includes(trigger.toLowerCase()) ||
-        trigger.toLowerCase().includes(queryLower)
-      );
+      let score = 0;
 
-      // Check if query matches skill name or description
-      const matchesContent =
-        skill.name.toLowerCase().includes(queryLower) ||
-        skill.description.toLowerCase().includes(queryLower) ||
-        skill.capabilities.some(cap => cap.toLowerCase().includes(queryLower));
+      // Trigger matching (highest weight) — exact trigger word in query
+      for (const trigger of skill.triggers) {
+        const triggerLower = trigger.toLowerCase();
+        if (queryLower.includes(triggerLower)) {
+          score += 10;
+        } else {
+          // Partial: individual trigger words in query
+          const triggerWords = triggerLower.split(/[\s\-_]+/);
+          for (const tw of triggerWords) {
+            if (tw.length > 2 && queryWords.includes(tw)) {
+              score += 5;
+            }
+          }
+        }
+      }
 
-      if (matchesTriggers || matchesContent) {
-        matchingSkills.push(skill);
+      // Skill name matching (high weight)
+      const nameTokens = skill.name.toLowerCase().split(/[\s\-_]+/);
+      for (const token of nameTokens) {
+        if (token.length > 2 && queryWords.includes(token)) {
+          score += 8;
+        }
+      }
+
+      // Capability matching (medium weight)
+      for (const cap of skill.capabilities) {
+        const capWords = cap.toLowerCase().split(/[\s,.\-_/()]+/).filter(w => w.length > 2);
+        for (const cw of capWords) {
+          if (queryWords.includes(cw)) {
+            score += 2;
+            break; // max 2 points per capability line
+          }
+        }
+      }
+
+      // Description word overlap (low weight, capped)
+      const descWords = skill.description.toLowerCase().split(/[\s,.\-_/()]+/).filter(w => w.length > 3);
+      let descHits = 0;
+      for (const dw of descWords) {
+        if (queryWords.includes(dw) && descHits < 5) {
+          score += 1;
+          descHits++;
+        }
+      }
+
+      if (score > 0) {
+        scored.push({ skill, score });
       }
     }
 
-    // Sort by category priority: master > elite > standard
-    return matchingSkills.sort((a, b) => {
-      const categoryOrder: Record<string, number> = {
-        development: 0,
-        utility: 1,
-        security: 2,
-        standard: 3,
-        experimental: 4
-      };
+    // Sort by score descending — best match first
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map(s => s.skill);
+  }
 
-      const aCat = this.getSkillCategory(a);
-      const bCat = this.getSkillCategory(b);
-      return (categoryOrder[aCat] || 2) - (categoryOrder[bCat] || 2);
-    });
+  /**
+   * Find skills with scores exposed (for auto_skill_match diagnostics)
+   */
+  findMatchingSkillsWithScores(query: string): Array<{ skill: SkillDefinition; score: number }> {
+    const queryLower = query.toLowerCase();
+    const queryWords = queryLower.split(/[\s,.\-_/]+/).filter(w => w.length > 2);
+    const scored: Array<{ skill: SkillDefinition; score: number }> = [];
+
+    const skillsArray = this.getAvailableSkills();
+    for (const skill of skillsArray) {
+      let score = 0;
+      for (const trigger of skill.triggers) {
+        const triggerLower = trigger.toLowerCase();
+        if (queryLower.includes(triggerLower)) {
+          score += 10;
+        } else {
+          const triggerWords = triggerLower.split(/[\s\-_]+/);
+          for (const tw of triggerWords) {
+            if (tw.length > 2 && queryWords.includes(tw)) { score += 5; }
+          }
+        }
+      }
+      const nameTokens = skill.name.toLowerCase().split(/[\s\-_]+/);
+      for (const token of nameTokens) {
+        if (token.length > 2 && queryWords.includes(token)) { score += 8; }
+      }
+      for (const cap of skill.capabilities) {
+        const capWords = cap.toLowerCase().split(/[\s,.\-_/()]+/).filter(w => w.length > 2);
+        for (const cw of capWords) {
+          if (queryWords.includes(cw)) { score += 2; break; }
+        }
+      }
+      const descWords = skill.description.toLowerCase().split(/[\s,.\-_/()]+/).filter(w => w.length > 3);
+      let descHits = 0;
+      for (const dw of descWords) {
+        if (queryWords.includes(dw) && descHits < 5) { score += 1; descHits++; }
+      }
+      if (score > 0) { scored.push({ skill, score }); }
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored;
   }
 
   /**
@@ -1094,15 +1206,36 @@ class SkillsBridge {
 
     response += `\n**Recommended Approach for "${input}":**\n`;
 
-    // Generate specific recommendations based on skill type
-    if (skill.name.includes('frontend')) {
-      response += this.generateFrontendGuidance(input);
-    } else if (skill.name.includes('backend')) {
-      response += this.generateBackendGuidance(input);
-    } else if (skill.name.includes('debug')) {
-      response += this.generateDebuggingGuidance(input);
-    } else if (skill.name.includes('architect')) {
-      response += this.generateArchitectureGuidance(input);
+    // Generate skill-specific recommendations
+    const guidanceMap: Record<string, () => string> = {
+      'ultra-frontend': () => this.generateFrontendGuidance(input),
+      'ultra-backend': () => this.generateBackendGuidance(input),
+      'ultra-fullstack': () => this.generateFullstackGuidance(input),
+      'ultra-css': () => this.generateCssGuidance(input),
+      'master-debugger': () => this.generateDebuggingGuidance(input),
+      'ultra-architect': () => this.generateArchitectureGuidance(input),
+      'clean-code': () => this.generateCleanCodeGuidance(input),
+      'self-learning': () => this.generateSelfLearningGuidance(input),
+      'ai-agent-builder': () => this.generateAgentBuilderGuidance(input),
+      'knowledge-base-builder': () => this.generateKnowledgeBaseGuidance(input),
+      'llm-trainer': () => this.generateLlmTrainerGuidance(input),
+      'test-automation': () => this.generateTestAutomationGuidance(input),
+      'devops-cicd': () => this.generateDevopsGuidance(input),
+      'data-engineering': () => this.generateDataEngineeringGuidance(input),
+      'web-scraping': () => this.generateWebScrapingGuidance(input),
+      'api-development': () => this.generateApiDevelopmentGuidance(input),
+      'database-management': () => this.generateDatabaseGuidance(input),
+      'security-testing': () => this.generateSecurityTestingGuidance(input),
+      'mlops': () => this.generateMlopsGuidance(input),
+      'cloud-infrastructure': () => this.generateCloudInfraGuidance(input),
+      'monitoring-observability': () => this.generateMonitoringGuidance(input),
+      'mcp-testing': () => this.generateMcpTestingGuidance(input),
+      'windows-deployment': () => this.generateWindowsDeploymentGuidance(input),
+    };
+
+    const generator = guidanceMap[skill.name];
+    if (generator) {
+      response += generator();
     } else {
       response += this.generateGeneralGuidance(skill, input);
     }
@@ -1166,6 +1299,294 @@ class SkillsBridge {
 5. **Data Architecture**: Design data flow, storage, and processing strategies
 6. **Operational Excellence**: Plan deployment, monitoring, and incident response
 7. **Documentation**: Create ADRs, system diagrams, and runbooks`;
+  }
+
+  private generateFullstackGuidance(input: string): string {
+    return `1. **Monorepo Setup**: Configure Turborepo/Nx with shared packages (ui, db, config)
+2. **End-to-End Type Safety**: Wire tRPC or GraphQL codegen between frontend and backend
+3. **Database Package**: Shared Prisma schema, migrations, and seed data
+4. **API Layer**: Type-safe client generation, error handling, auth middleware
+5. **Shared UI Library**: Component library with Storybook, exported from packages/ui
+6. **CI/CD Pipeline**: Parallel builds per package, deploy only affected services
+7. **Environment Validation**: Zod schemas for env vars, validated at build time`;
+  }
+
+  private generateCssGuidance(input: string): string {
+    return `1. **Design Tokens**: Define color, spacing, and typography tokens (CSS custom properties)
+2. **Cascade Layers**: Structure with @layer reset, base, components, utilities
+3. **Container Queries**: Use @container for component-level responsive design
+4. **Modern Selectors**: Leverage :has(), :is(), :where() for cleaner selectors
+5. **Color System**: Use oklch() for perceptually uniform color palettes
+6. **Animations**: Scroll-driven animations, View Transitions API for page nav
+7. **Dark Mode**: Implement with color-scheme and light-dark() function`;
+  }
+
+  private generateCleanCodeGuidance(input: string): string {
+    return `**Code Quality Checklist:**
+
+1. **SOLID Violations**: Check single-responsibility, open-closed, dependency inversion
+2. **Code Smells**: Hunt for long methods (>20 lines), large classes, feature envy, data clumps
+3. **Refactoring**: Extract method, introduce parameter object, replace conditional with polymorphism
+4. **Design Patterns**: Identify where Strategy, Observer, Factory, or Decorator apply
+5. **Error Handling**: Replace generic catches with typed errors, use Result/Either patterns
+6. **Naming**: Variables reveal intent, functions describe action, classes describe responsibility
+7. **Tests**: Each refactored unit has a test; refactor under green tests only
+
+**Quick Wins:**
+• Guard clauses instead of nested if/else
+• Early returns to reduce indentation
+• Const by default, let only when mutation needed
+• Eliminate magic numbers with named constants`;
+  }
+
+  private generateSelfLearningGuidance(input: string): string {
+    return `**6-Phase Learning Loop:**
+
+1. **Detect**: Classify the knowledge gap (unknown-unknown, known-unknown, outdated)
+2. **Research**: Multi-source search with credibility scoring (official docs > blog posts > forums)
+3. **Synthesize**: Cross-validate findings, identify consensus and contradictions
+4. **Apply**: Test the learned solution against the original problem
+5. **Persist**: Store validated knowledge in the knowledge base with confidence level
+6. **Improve**: Monitor outcomes, promote/demote knowledge based on real-world results
+
+**Knowledge Base Commands:**
+• Search: \`python manager.py --search "query"\`
+• Stats: \`python manager.py --stats\`
+• Add: Document findings with HIGH/MEDIUM/LOW confidence tags`;
+  }
+
+  private generateAgentBuilderGuidance(input: string): string {
+    return `1. **Agent Architecture**: Choose pattern — ReAct (reason+act), Plan-and-Execute, or multi-agent
+2. **Tool Design**: Define clear tool schemas with input validation and error handling
+3. **Memory Strategy**: Short-term (conversation buffer), long-term (vector store), working memory
+4. **Orchestration**: Single agent vs. CrewAI/AutoGen multi-agent with role assignment
+5. **Guardrails**: Input validation, output parsing, max iterations, cost limits
+6. **Evaluation**: Test with diverse inputs, measure task completion rate and cost per task
+
+**Framework Selection:**
+• LangChain/LangGraph — most flexibility, largest ecosystem
+• CrewAI — best for role-based multi-agent teams
+• AutoGen — best for conversational agent patterns`;
+  }
+
+  private generateKnowledgeBaseGuidance(input: string): string {
+    return `1. **Document Ingestion**: Parse PDFs/HTML/markdown, clean and normalize text
+2. **Chunking Strategy**: Choose chunk size (512-1024 tokens), overlap (10-20%), respect boundaries
+3. **Embedding Model**: Select model (OpenAI, Cohere, local sentence-transformers)
+4. **Vector Store**: Configure pgvector, Chroma, or Qdrant with proper indexing (HNSW/IVF)
+5. **Retrieval Pipeline**: Hybrid search (dense + BM25 sparse), re-ranking with cross-encoder
+6. **RAG Chain**: Context assembly, prompt template, citation tracking, hallucination detection
+
+**Key Metrics:**
+• Retrieval: Recall@K, MRR, NDCG
+• Generation: Faithfulness, relevance, answer correctness`;
+  }
+
+  private generateLlmTrainerGuidance(input: string): string {
+    return `1. **Dataset Preparation**: Format as instruction/response pairs, clean and deduplicate
+2. **Base Model Selection**: Choose size vs. capability tradeoff for your VRAM (32GB RTX 5090)
+3. **Training Method**: LoRA (r=16-64, alpha=32-128) or QLoRA (4-bit quantized base)
+4. **Hyperparameters**: lr=2e-4, epochs=3-5, batch_size=4 with gradient accumulation
+5. **Training**: Launch with Unsloth for 2x speed, monitor loss curves in real-time
+6. **Evaluation**: Run benchmark suite, compare base vs. fine-tuned on domain tasks
+7. **Export**: Merge LoRA adapters, convert to GGUF for Ollama deployment
+
+**RTX 5090 Sweet Spots:**
+• 7B models: Full fine-tune possible, LoRA trivial
+• 13-32B models: QLoRA fits comfortably
+• 70B models: QLoRA with 4-bit, gradient checkpointing`;
+  }
+
+  private generateTestAutomationGuidance(input: string): string {
+    return `1. **Test Strategy**: Define pyramid — unit (70%), integration (20%), E2E (10%)
+2. **Framework Selection**: Vitest/Jest (unit), Playwright (E2E), pytest (API)
+3. **Page Object Model**: Create maintainable page objects for UI automation
+4. **Data Management**: Test fixtures, factories, database seeding, cleanup
+5. **CI Integration**: Run tests in pipeline, fail fast, parallel execution
+6. **Reporting**: HTML reports, screenshot on failure, video recording for E2E
+
+**Platform-Specific:**
+• Web: Playwright (cross-browser, auto-wait, trace viewer)
+• Mobile: Appium or Detox (React Native)
+• API: pytest + httpx, or REST Assured
+• RPA: Power Automate, UiPath for desktop automation
+• UFT One: VBScript-based, for enterprise SAP/Oracle testing`;
+  }
+
+  private generateDevopsGuidance(input: string): string {
+    return `1. **Pipeline Design**: Trigger → Build → Test → Scan → Deploy → Verify
+2. **Containerization**: Multi-stage Dockerfile, .dockerignore, minimal base images
+3. **Orchestration**: Docker Compose (dev), Kubernetes (prod) with Helm charts
+4. **IaC**: Terraform for cloud resources, version-controlled, plan before apply
+5. **GitOps**: ArgoCD or Flux for declarative deployments from Git
+6. **Secrets**: Never in code — use vault, sealed-secrets, or cloud secret managers
+
+**GitHub Actions Quick Start:**
+• Build matrix for multi-platform
+• Caching (node_modules, Docker layers)
+• Environment protection rules for prod
+• OIDC for cloud auth (no stored credentials)`;
+  }
+
+  private generateDataEngineeringGuidance(input: string): string {
+    return `1. **Pipeline Architecture**: Choose batch (Airflow), stream (Kafka), or hybrid
+2. **Medallion Layers**: Bronze (raw) → Silver (cleaned) → Gold (business-ready)
+3. **Transformations**: dbt for SQL-based, Polars for DataFrame-based processing
+4. **Data Quality**: Great Expectations or Soda for schema/value/freshness checks
+5. **Orchestration**: Airflow DAGs with retry, alerting, SLA monitoring
+6. **Storage**: Parquet on S3/GCS for lakes, PostgreSQL/ClickHouse for warehouses
+
+**Performance Tips:**
+• Polars over Pandas for 10-100x speedup on large datasets
+• Partitioning by date for time-series data
+• Incremental processing over full reloads when possible`;
+  }
+
+  private generateWebScrapingGuidance(input: string): string {
+    return `1. **Target Analysis**: Inspect page structure, identify data patterns, check robots.txt
+2. **Tool Selection**: requests+BS4 (static), Playwright (JS-rendered), Scrapy (at scale)
+3. **Selectors**: CSS selectors for simple, XPath for complex, regex as last resort
+4. **Anti-Detection**: Rotate user agents, use proxies, respect rate limits, randomize delays
+5. **Data Extraction**: Parse structured data, handle pagination, normalize output
+6. **Storage**: JSON lines for streaming, CSV for tabular, database for dedup
+
+**Ethics Checklist:**
+• Respect robots.txt and terms of service
+• Rate limit requests (1-2 req/sec minimum delay)
+• Cache responses to avoid re-fetching
+• Identify your bot in User-Agent string`;
+  }
+
+  private generateApiDevelopmentGuidance(input: string): string {
+    return `1. **API Design**: Resource-oriented URLs, proper HTTP methods, consistent naming
+2. **Schema Definition**: Pydantic/Zod models for request/response validation
+3. **Authentication**: JWT access tokens (short-lived) + refresh tokens, or API keys
+4. **Error Handling**: RFC 7807 Problem Details format, consistent error codes
+5. **Rate Limiting**: Token bucket per user/endpoint, return X-RateLimit headers
+6. **Documentation**: OpenAPI 3.1 spec, auto-generated from code annotations
+
+**FastAPI Quick Pattern:**
+\`\`\`
+app = FastAPI()
+@app.get("/items/{id}", response_model=ItemResponse)
+async def get_item(id: int, db: Session = Depends(get_db)):
+    ...
+\`\`\``;
+  }
+
+  private generateDatabaseGuidance(input: string): string {
+    return `1. **Schema Design**: Normalize to 3NF, denormalize strategically for read paths
+2. **Indexing**: B-tree for equality/range, GIN for JSONB/full-text, GiST for spatial
+3. **Query Optimization**: EXPLAIN ANALYZE, avoid N+1, use CTEs for readability
+4. **Migrations**: Forward-only, expand-contract for zero-downtime changes
+5. **Connection Pooling**: PgBouncer or built-in pool, size = (cores * 2) + disks
+6. **Caching**: Redis for hot data, materialized views for complex aggregations
+
+**PostgreSQL Specifics:**
+• pgvector for embedding similarity search
+• JSONB for flexible schema within relational model
+• Partitioning for tables > 100M rows
+• pg_stat_statements for query performance monitoring`;
+  }
+
+  private generateSecurityTestingGuidance(input: string): string {
+    return `**OWASP Top 10 Testing Checklist:**
+
+1. **A01 Broken Access Control**: Test every endpoint with different roles, verify deny-by-default
+2. **A02 Crypto Failures**: Scan for weak algorithms, exposed secrets, missing TLS
+3. **A03 Injection**: Test all inputs with SQL, XSS, command injection payloads
+4. **A04 Insecure Design**: Review threat model, check for missing business logic validation
+5. **A05 Misconfiguration**: Scan for default credentials, verbose errors, unnecessary features
+
+**Tool Workflow:**
+• SAST: Semgrep/CodeQL on every PR
+• DAST: OWASP ZAP against staging
+• SCA: Trivy/Snyk for dependency vulnerabilities
+• Secrets: TruffleHog/GitLeaks on git history
+• Container: Trivy scan on Docker images before deploy`;
+  }
+
+  private generateMlopsGuidance(input: string): string {
+    return `1. **Experiment Tracking**: MLflow for parameters, metrics, artifacts, model registry
+2. **Feature Store**: Feast for online/offline feature serving with point-in-time correctness
+3. **Model Serving**: BentoML for REST API, TorchServe for PyTorch, TensorRT for GPU inference
+4. **Monitoring**: Evidently for data drift, prediction drift, and model quality metrics
+5. **Pipeline Orchestration**: Kubeflow or Airflow for training → evaluation → deployment
+6. **A/B Testing**: Shadow mode first, then gradual rollout with statistical significance checks
+
+**Model Lifecycle:**
+Train → Validate → Register → Stage → Deploy → Monitor → Retrain`;
+  }
+
+  private generateCloudInfraGuidance(input: string): string {
+    return `1. **Architecture**: Design VPC/network topology, subnets, security groups
+2. **Compute**: Right-size instances, use spot/preemptible for fault-tolerant workloads
+3. **Storage**: S3/GCS lifecycle policies, tiering (hot/warm/cold/archive)
+4. **IaC**: Terraform modules, remote state, workspace per environment
+5. **Serverless**: Lambda/Cloud Functions for event-driven, API Gateway for HTTP
+6. **Cost**: Tag everything, set billing alerts, reserved instances for baseline load
+
+**AWS Quick Reference:**
+• VPC + ALB + ECS Fargate for containerized apps
+• RDS Multi-AZ for database HA
+• CloudFront + S3 for static assets
+• EventBridge + Lambda for event processing`;
+  }
+
+  private generateMonitoringGuidance(input: string): string {
+    return `1. **Metrics**: Prometheus for collection, define RED metrics (Rate, Errors, Duration)
+2. **Logging**: Structured JSON logs, correlation IDs, ship to Loki/ELK
+3. **Tracing**: OpenTelemetry SDK, Jaeger/Tempo for distributed trace visualization
+4. **Dashboards**: Grafana with 4 golden signals per service (latency, traffic, errors, saturation)
+5. **Alerting**: Route by severity, PagerDuty for P1, Slack for P2+, runbook links in alerts
+6. **SLOs**: Define SLIs (latency p99, error rate), set SLOs (99.9%), track error budgets
+
+**Incident Response:**
+Detect → Triage → Mitigate → Root Cause → Remediate → Postmortem`;
+  }
+
+  private generateMcpTestingGuidance(input: string): string {
+    return `**MCP Server Testing Protocol (from real deployment lessons):**
+
+1. **Protocol Compliance**: Verify ONLY JSON-RPC messages on stdout — no console.log, no emojis, no status text
+2. **stdio Stream Audit**: Grep source for console.log/console.warn — ALL must be console.error in MCP servers
+3. **Config Validation**: Check claude_desktop_config.json has correct server entry, args paths, env vars
+4. **Path Validation**: Test with Windows drive letters (C:\\), forward slashes (C:/), backslashes, UNC paths
+5. **Spawn Testing**: Verify shell:true for Windows .cmd wrappers (npm, npx) and builtins (dir, echo)
+6. **Security Regex Audit**: Ensure path validation regex allows colons (drive letters) and backslashes on Windows
+7. **End-to-End**: Pipe JSON-RPC initialize + tool call via stdin, verify clean JSON response on stdout
+8. **Claude Desktop Integration**: Restart Desktop, verify tool count, run each tool manually
+
+**Critical Rule:** If it writes to stdout, it MUST be valid JSON-RPC. Everything else goes to stderr.
+
+**Common Windows Failures:**
+• ENOENT: Missing shell:true in spawn() for .cmd files
+• Regex blocking C: drive letter paths
+• Working directory mismatch (Claude Desktop app dir vs project dir)`;
+  }
+
+  private generateWindowsDeploymentGuidance(input: string): string {
+    return `**Windows-Specific Deployment Checklist:**
+
+1. **Path Handling**: Use path.join() or path.resolve() — never hardcode separators
+2. **Drive Letters**: Security regex must allow ':' in paths (C:\\Users\\...)
+3. **Backslashes**: Regex patterns must allow '\\' for Windows paths — don't include in injection patterns
+4. **Process Spawning**: Always use shell:true on Windows for .cmd/.bat wrappers and builtins
+5. **Environment Variables**: Use %APPDATA%, %LOCALAPPDATA%, %USERPROFILE% (or process.env equivalents)
+6. **Long Paths**: Enable LongPathsEnabled in registry or use \\\\?\\ prefix for paths > 260 chars
+7. **Line Endings**: Git config core.autocrlf, .gitattributes for consistent line endings
+
+**Cross-Platform Patterns:**
+\`\`\`typescript
+import { platform } from 'os';
+const isWindows = platform() === 'win32';
+spawn(cmd, args, { shell: isWindows }); // shell:true only on Windows
+\`\`\`
+
+**Debugging Windows Failures:**
+• ENOENT: Usually missing shell:true or wrong PATH
+• EPERM: Run as administrator or check file locks
+• Path blocked: Review security regex for Windows-incompatible patterns`;
   }
 
   private generateGeneralGuidance(skill: SkillDefinition, input: string): string {
@@ -1421,24 +1842,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           reason: `Starting auto skill match for request: ${request.substring(0, 100)}`
         });
 
-        const matchingSkills = skills.findMatchingSkills(request);
+        const scoredMatches = skills.findMatchingSkillsWithScores(request);
 
-        if (matchingSkills.length === 0) {
+        if (scoredMatches.length === 0) {
           await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', 'No matching skills found');
           return { content: [{ type: 'text', text: `No skills automatically matched for "${request}". Try using \`find_skills\` with specific keywords, or \`list_skills\` to browse all available skills.` }] };
         }
 
         // Apply the best matching skill with enhanced validation
-        const bestSkill = matchingSkills[0];
+        const bestMatch = scoredMatches[0];
 
         // Validate skill selection
-        const skillValidation = SkillSecurityValidator.validateSkillName(bestSkill.name);
+        const skillValidation = SkillSecurityValidator.validateSkillName(bestMatch.skill.name);
         if (!skillValidation.valid) {
           await SkillsSecurityLogger.logSecurityEvent({
             type: 'SKILL_BLOCKED',
             severity: 'HIGH',
             operation: 'auto_skill_match_validation',
-            skillName: bestSkill.name,
+            skillName: bestMatch.skill.name,
             reason: skillValidation.reason || 'Auto-matched skill validation failed'
           });
           throw new Error('Auto-matched skill failed validation');
@@ -1449,21 +1870,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           type: 'SKILL_ACCESS',
           severity: 'LOW',
           operation: 'auto_skill_match_apply',
-          skillName: bestSkill.name,
-          reason: `Auto-applying best matching skill: ${bestSkill.name}`
+          skillName: bestMatch.skill.name,
+          reason: `Auto-applying best matching skill: ${bestMatch.skill.name} (score: ${bestMatch.score})`
         });
 
-        const result = await skills.applySkill(bestSkill.name, request);
+        const result = await skills.applySkill(bestMatch.skill.name, request);
 
-        let response = `**🎯 AUTO-MATCHED SKILL: ${bestSkill.name.toUpperCase()}**\n\n`;
+        let response = `**AUTO-MATCHED SKILL: ${bestMatch.skill.name.toUpperCase()}** (score: ${bestMatch.score})\n\n`;
 
-        if (matchingSkills.length > 1) {
-          response += `*Also considered: ${matchingSkills.slice(1, 4).map(s => s.name).join(', ')}*\n\n`;
+        if (scoredMatches.length > 1) {
+          const runners = scoredMatches.slice(1, 4).map(s => `${s.skill.name} (${s.score})`).join(', ');
+          response += `*Also considered: ${runners}*\n\n`;
         }
 
         response += result;
 
-        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Auto-matched and applied skill: ${bestSkill.name}`);
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Auto-matched and applied skill: ${bestMatch.skill.name} (score: ${bestMatch.score})`);
         return { content: [{ type: 'text', text: response }] };
       }
 

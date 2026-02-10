@@ -13,6 +13,18 @@ import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'node:crypto';
 
+// Phase 3A: Dynamic Skill Loading imports
+import { SkillRegistry } from './skill-registry.js';
+import { SkillLoader } from './skill-loader.js';
+import { TrustManager } from './trust-manager.js';
+import {
+  SkillManifest,
+  SkillDefinition as DynamicSkillDefinition,
+  TrustLevel,
+  SkillCategory,
+  SkillScanResult
+} from './types.js';
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Extract a human-readable message from an unknown thrown value. */
@@ -385,16 +397,22 @@ const SkillsValidationSchemas = {
 
 // ── Skill Definitions ────────────────────────────────────────────────────────
 
-interface SkillDefinition {
+// Legacy built-in skill definition (backwards compatibility)
+interface LegacySkillDefinition {
   name: string;
   description: string;
   category: 'master' | 'elite' | 'standard';
   triggers: string[];
   capabilities: string[];
   pairsWith: string[];
+  // Compatibility flag
+  legacy?: boolean;
 }
 
-const SKILL_DEFINITIONS: SkillDefinition[] = [
+// Unified skill definition type
+type SkillDefinition = LegacySkillDefinition | DynamicSkillDefinition;
+
+const SKILL_DEFINITIONS: LegacySkillDefinition[] = [
   // Master Skills (80+ years equivalent expertise)
   {
     name: 'ultra-frontend',
@@ -733,26 +751,148 @@ const SKILL_DEFINITIONS: SkillDefinition[] = [
   }
 ];
 
-// ── Skills Bridge ────────────────────────────────────────────────────────────
+// ── Enhanced Skills Bridge with Dynamic Loading ─────────────────────────────
 
 class SkillsBridge {
   private config: Config;
   private skills: Map<string, SkillDefinition>;
+  private registry: SkillRegistry;
+  private loader: SkillLoader;
+  private trustManager: TrustManager;
+  private initialized: boolean = false;
 
   constructor(config: Partial<Config> = {}) {
     this.config = ConfigSchema.parse(config);
     this.skills = new Map();
+    this.registry = new SkillRegistry();
+    this.loader = new SkillLoader();
+    this.trustManager = new TrustManager();
 
-    // Initialize skills
+    // Initialize legacy built-in skills (backwards compatibility)
     for (const skill of SKILL_DEFINITIONS) {
       if (!this.config.enabledSkills || this.config.enabledSkills.includes(skill.name)) {
-        this.skills.set(skill.name, skill);
+        // Mark as legacy skill and add to skills map
+        const legacySkill = { ...skill, legacy: true } as LegacySkillDefinition;
+        this.skills.set(skill.name, legacySkill);
       }
     }
   }
 
   /**
-   * Get all available skills
+   * Initialize dynamic skill loading (Phase 3A)
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) return;
+
+    try {
+      console.log('🔧 Initializing Skills Bridge with dynamic loading...');
+
+      // Initialize components
+      await this.registry.initialize();
+
+      // Migrate legacy skills to registry if not already present
+      await this.migrateLegacySkills();
+
+      // Scan and load dynamic skills
+      const scanResult = await this.loader.scanAllSkills();
+      console.log(`📊 Skill scan complete: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded, ${scanResult.pending_approval} pending approval`);
+
+      if (scanResult.errors.length > 0) {
+        console.warn(`⚠️ Skill loading errors: ${scanResult.errors.length} skills failed`);
+        scanResult.errors.forEach(error => {
+          console.warn(`   ${error.skill_name}: ${error.error}`);
+        });
+      }
+
+      // Load validated dynamic skills into the skills map
+      await this.loadDynamicSkills();
+
+      this.initialized = true;
+      console.log(`✅ Skills Bridge initialized: ${this.skills.size} skills total (${SKILL_DEFINITIONS.length} legacy + ${this.skills.size - SKILL_DEFINITIONS.length} dynamic)`);
+
+    } catch (error) {
+      console.error('⚠️ Skills Bridge dynamic loading failed, falling back to legacy-only mode:', error);
+      this.initialized = true; // Still mark as initialized to prevent retries
+    }
+  }
+
+  /**
+   * Migrate legacy skills to the registry system
+   */
+  private async migrateLegacySkills(): Promise<void> {
+    for (const legacySkill of SKILL_DEFINITIONS) {
+      try {
+        // Create manifest for legacy skill
+        const manifest: SkillManifest = {
+          name: legacySkill.name,
+          version: '1.0.0',
+          author: 'Claude Skills Team',
+          created: '2024-01-01T00:00:00Z',
+          updated: new Date().toISOString(),
+          trust_level: TrustLevel.SYSTEM,
+          integrity_hash: createHash('sha256').update(JSON.stringify(legacySkill)).digest('hex'),
+          capabilities: legacySkill.capabilities,
+          required_permissions: [],
+          resource_limits: {
+            max_memory_mb: 1024,
+            timeout_seconds: 300,
+            max_file_size_mb: 100,
+            max_network_requests: 100
+          },
+          description: legacySkill.description,
+          category: legacySkill.category === 'master' ? SkillCategory.MASTER :
+                   legacySkill.category === 'elite' ? SkillCategory.ELITE :
+                   SkillCategory.STANDARD,
+          triggers: legacySkill.triggers,
+          pairs_with: legacySkill.pairsWith
+        };
+
+        // Create dynamic skill definition
+        const dynamicDefinition: DynamicSkillDefinition = {
+          name: legacySkill.name,
+          description: legacySkill.description,
+          capabilities: legacySkill.capabilities,
+          category: manifest.category,
+          triggers: legacySkill.triggers,
+          pairsWith: legacySkill.pairsWith,
+          manifest,
+          trust_level: TrustLevel.SYSTEM,
+          last_loaded: new Date().toISOString()
+        };
+
+        // Register in the registry (if not already exists)
+        const existing = this.registry.getSkill(legacySkill.name);
+        if (!existing) {
+          await this.registry.registerSkill(manifest, dynamicDefinition);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Failed to migrate legacy skill ${legacySkill.name}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Load dynamic skills from the loader into the skills map
+   */
+  private async loadDynamicSkills(): Promise<void> {
+    const allSkills = this.registry.getSkills();
+
+    for (const skill of allSkills) {
+      // Skip if already loaded as legacy skill
+      if (this.skills.has(skill.name) && (this.skills.get(skill.name) as LegacySkillDefinition).legacy) {
+        continue;
+      }
+
+      // Add dynamic skills to the skills map
+      if (skill.trust_level === TrustLevel.SYSTEM || skill.trust_level === TrustLevel.VERIFIED) {
+        this.skills.set(skill.name, skill);
+      }
+      // Untrusted skills remain in registry but aren't auto-loaded
+    }
+  }
+
+  /**
+   * Get all available skills (both legacy and dynamic)
    */
   getAvailableSkills(): SkillDefinition[] {
     const skills: SkillDefinition[] = [];
@@ -761,7 +901,7 @@ class SkillsBridge {
   }
 
   /**
-   * Find skills matching triggers/keywords
+   * Find skills matching triggers/keywords (unified search across legacy and dynamic)
    */
   findMatchingSkills(query: string): SkillDefinition[] {
     const queryLower = query.toLowerCase();
@@ -788,22 +928,126 @@ class SkillsBridge {
 
     // Sort by category priority: master > elite > standard
     return matchingSkills.sort((a, b) => {
-      const categoryOrder = { master: 0, elite: 1, standard: 2 };
-      return categoryOrder[a.category] - categoryOrder[b.category];
+      const categoryOrder: Record<string, number> = {
+        master: 0,
+        elite: 1,
+        standard: 2
+      };
+
+      const aCat = this.getSkillCategory(a);
+      const bCat = this.getSkillCategory(b);
+      return (categoryOrder[aCat] || 2) - (categoryOrder[bCat] || 2);
     });
   }
 
   /**
-   * Apply a skill to a specific task
+   * Get category from either legacy or dynamic skill
+   */
+  private getSkillCategory(skill: SkillDefinition): string {
+    if ('category' in skill) {
+      return skill.category;
+    }
+    return 'standard';
+  }
+
+  /**
+   * Apply a skill to a specific task (unified handling)
    */
   async applySkill(skillName: string, input: string, args?: string): Promise<string> {
+    // Ensure dynamic loading is initialized
+    await this.initialize();
+
     const skill = this.skills.get(skillName);
     if (!skill) {
       throw new Error(`Skill not found: ${skillName}`);
     }
 
-    // Generate skill response based on the skill definition
-    return this.generateSkillResponse(skill, input, args);
+    // Record usage in registry if this is a dynamic skill
+    const startTime = Date.now();
+    try {
+      const response = this.generateSkillResponse(skill, input, args);
+      const executionTime = Date.now() - startTime;
+
+      // Record usage for both legacy and dynamic skills
+      if (!('legacy' in skill && skill.legacy)) {
+        await this.registry.recordUsage(skillName, executionTime, true);
+      }
+
+      return response;
+    } catch (error) {
+      const executionTime = Date.now() - startTime;
+
+      // Record failed usage
+      if (!('legacy' in skill && skill.legacy)) {
+        await this.registry.recordUsage(skillName, executionTime, false);
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Get skill statistics and registry information
+   */
+  async getSkillStats(): Promise<any> {
+    await this.initialize();
+
+    const legacyCount = Array.from(this.skills.values()).filter(skill =>
+      'legacy' in skill && skill.legacy
+    ).length;
+
+    const dynamicCount = this.skills.size - legacyCount;
+    const registryStats = await this.registry.getSkillStats();
+
+    return {
+      total_skills: this.skills.size,
+      legacy_skills: legacyCount,
+      dynamic_skills: dynamicCount,
+      registry_stats: registryStats,
+      trust_distribution: this.getTrustDistribution(),
+      pending_approvals: (await this.trustManager.getPendingApprovals()).length
+    };
+  }
+
+  /**
+   * Get trust level distribution
+   */
+  private getTrustDistribution(): Record<string, number> {
+    const distribution: Record<string, number> = {
+      [TrustLevel.SYSTEM]: 0,
+      [TrustLevel.VERIFIED]: 0,
+      [TrustLevel.UNTRUSTED]: 0,
+      legacy: 0
+    };
+
+    for (const skill of this.skills.values()) {
+      if ('legacy' in skill && skill.legacy) {
+        distribution.legacy++;
+      } else if ('trust_level' in skill) {
+        distribution[skill.trust_level]++;
+      }
+    }
+
+    return distribution;
+  }
+
+  /**
+   * Rescan and reload dynamic skills
+   */
+  async rescanSkills(): Promise<SkillScanResult> {
+    const scanResult = await this.loader.scanAllSkills();
+    await this.loadDynamicSkills();
+
+    console.log(`🔄 Skills rescanned: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded`);
+    return scanResult;
+  }
+
+  /**
+   * Get pending skill approvals
+   */
+  async getPendingApprovals(): Promise<any[]> {
+    await this.initialize();
+    return this.trustManager.getPendingApprovals();
   }
 
   /**
@@ -1001,6 +1245,31 @@ const tools: Tool[] = [
       required: ['request'],
     },
   },
+  // Phase 3A: Dynamic Skill Management Tools
+  {
+    name: 'skill_stats',
+    description: 'Get statistics about skills, registry, and usage analytics',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'rescan_skills',
+    description: 'Rescan and reload dynamic skills from the skills directory',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'get_pending_approvals',
+    description: 'Get list of skills pending approval for trust management',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
 ];
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -1179,6 +1448,91 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return { content: [{ type: 'text', text: response }] };
       }
 
+      // Phase 3A: Dynamic Skill Management Handlers
+      case 'skill_stats': {
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'skill_stats',
+          reason: 'Getting skill statistics and registry information'
+        });
+
+        const stats = await skills.getSkillStats();
+        const statsText = `**Skills Bridge Statistics**
+
+**Total Skills**: ${stats.total_skills}
+- Legacy Skills: ${stats.legacy_skills}
+- Dynamic Skills: ${stats.dynamic_skills}
+
+**Trust Distribution**:
+- System (Built-in): ${stats.trust_distribution.system || 0}
+- Verified: ${stats.trust_distribution.verified || 0}
+- Untrusted: ${stats.trust_distribution.untrusted || 0}
+- Legacy: ${stats.trust_distribution.legacy || 0}
+
+**Pending Approvals**: ${stats.pending_approvals}
+
+**Registry Stats**: ${JSON.stringify(stats.registry_stats, null, 2)}`;
+
+        await SkillsSecurityLogger.logToolExecution(name, {}, 'SUCCESS', 'Statistics retrieved successfully');
+        return { content: [{ type: 'text', text: statsText }] };
+      }
+
+      case 'rescan_skills': {
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'rescan_skills',
+          reason: 'Rescanning skills directory for new skills'
+        });
+
+        const scanResult = await skills.rescanSkills();
+        const resultText = `**Skill Rescan Complete**
+
+**Found**: ${scanResult.found_skills} skills
+**Loaded**: ${scanResult.loaded_skills} skills
+**Failed**: ${scanResult.failed_skills} skills
+**Pending Approval**: ${scanResult.pending_approval} skills
+**Scan Duration**: ${scanResult.scan_duration_ms}ms
+
+${scanResult.errors.length > 0 ? `**Errors**:\n${scanResult.errors.map(e => `• ${e.skill_name}: ${e.error}`).join('\n')}` : '✅ No errors during scan'}
+
+Use \`skill_stats\` to see updated statistics.`;
+
+        await SkillsSecurityLogger.logToolExecution(name, {}, 'SUCCESS', `Rescanned: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded`);
+        return { content: [{ type: 'text', text: resultText }] };
+      }
+
+      case 'get_pending_approvals': {
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'get_pending_approvals',
+          reason: 'Getting pending skill approvals'
+        });
+
+        const pendingApprovals = await skills.getPendingApprovals();
+
+        if (pendingApprovals.length === 0) {
+          await SkillsSecurityLogger.logToolExecution(name, {}, 'SUCCESS', 'No pending approvals');
+          return { content: [{ type: 'text', text: '✅ **No Skills Pending Approval**\n\nAll skills are either approved or automatically loaded.' }] };
+        }
+
+        const approvalsText = `**Skills Pending Approval (${pendingApprovals.length})**
+
+${pendingApprovals.map((req, i) => `**${i + 1}. ${req.skill_name}**
+- **Risk Level**: ${req.risk_assessment.risk_level}
+- **Requested**: ${new Date(req.requested_at).toLocaleString()}
+- **Expires**: ${req.expires_at ? new Date(req.expires_at).toLocaleString() : 'Never'}
+- **Concerns**: ${req.risk_assessment.concerns.join(', ')}
+- **Recommendations**: ${req.risk_assessment.recommendations.join(', ')}`).join('\n\n')}
+
+**Note**: Skill approval must be handled manually for security. Review each skill carefully before approving.`;
+
+        await SkillsSecurityLogger.logToolExecution(name, {}, 'SUCCESS', `Retrieved ${pendingApprovals.length} pending approvals`);
+        return { content: [{ type: 'text', text: approvalsText }] };
+      }
+
       default:
         // Log unknown tool attempts for security analysis
         await SkillsSecurityLogger.logSecurityEvent({
@@ -1228,6 +1582,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Initialize dynamic skill loading
+  try {
+    await skills.initialize();
+  } catch (error) {
+    console.error('Skills initialization warning:', error);
+  }
+
   console.error('Skills bridge MCP server running on stdio');
 }
 

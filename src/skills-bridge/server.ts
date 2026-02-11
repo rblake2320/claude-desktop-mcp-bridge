@@ -1024,7 +1024,15 @@ class SkillsBridge {
 
     // Sort by score descending — best match first
     scored.sort((a, b) => b.score - a.score);
-    return scored.map(s => s.skill);
+
+    // Apply score floor: drop results scoring below 25% of the top match
+    // This removes low-relevance noise (e.g. ultra-css for "backend API database")
+    if (scored.length > 0) {
+      const topScore = scored[0].score;
+      const floor = Math.max(3, Math.floor(topScore * 0.25));
+      return scored.filter(s => s.score >= floor).map(s => s.skill);
+    }
+    return [];
   }
 
   /**
@@ -1067,6 +1075,13 @@ class SkillsBridge {
       if (score > 0) { scored.push({ skill, score }); }
     }
     scored.sort((a, b) => b.score - a.score);
+
+    // Apply same score floor as findMatchingSkills
+    if (scored.length > 0) {
+      const topScore = scored[0].score;
+      const floor = Math.max(3, Math.floor(topScore * 0.25));
+      return scored.filter(s => s.score >= floor);
+    }
     return scored;
   }
 
@@ -1250,12 +1265,67 @@ class SkillsBridge {
   }
 
   private generateBackendGuidance(input: string): string {
-    return `1. **Architecture Design**: Choose between monolith, microservices, or modular monolith
-2. **API Design**: Implement RESTful or GraphQL APIs with proper versioning
-3. **Database Strategy**: Design schema, optimize queries, and implement caching
-4. **Authentication**: Set up JWT/OAuth2 with refresh tokens and proper security
-5. **Scalability**: Implement rate limiting, load balancing, and horizontal scaling
-6. **Monitoring**: Add logging, metrics, and health checks for observability`;
+    let guidance = '';
+
+    // Detect domain-specific context and inject relevant patterns
+    const isEcommerce = /e-?commerce|shop|cart|checkout|order|inventory|payment|product catalog/i.test(input);
+    const isMicroservices = /microservice|micro-service|distributed|service mesh|event.driven/i.test(input);
+    const isAuth = /auth|login|oauth|jwt|session|identity|sso/i.test(input);
+    const isRealtime = /real.?time|websocket|sse|streaming|push|notification/i.test(input);
+
+    if (isEcommerce && isMicroservices) {
+      guidance += `**E-Commerce Microservices Architecture:**
+1. **Service Boundaries**: Order Service, Inventory Service, Payment Gateway, Product Catalog, User/Auth — each owns its database
+2. **Saga Pattern**: Orchestrate order flow (reserve inventory → charge payment → confirm order → ship) with compensation on failure
+3. **CQRS**: Separate write models (order placement) from read models (order history, product search) for different scaling needs
+4. **Event Bus**: Kafka/RabbitMQ for inter-service communication — OrderCreated, PaymentProcessed, InventoryReserved events
+5. **Idempotency**: Payment and order endpoints MUST be idempotent (use idempotency keys) to handle retries safely
+6. **API Gateway**: Kong/AWS API Gateway for routing, rate limiting, and auth token validation at the edge
+7. **Data Consistency**: Eventual consistency between services; use outbox pattern to guarantee event publishing`;
+    } else if (isMicroservices) {
+      guidance += `**Microservices Architecture:**
+1. **Service Decomposition**: Identify bounded contexts — each service owns its data and business logic
+2. **Communication**: Sync (REST/gRPC) for queries, async (events) for commands and state changes
+3. **Saga Pattern**: Orchestrate distributed transactions with compensating actions on failure
+4. **Service Discovery**: Use Consul/Eureka or Kubernetes DNS for service-to-service resolution
+5. **Circuit Breakers**: Resilience4j/Polly to prevent cascade failures between services
+6. **Observability**: Distributed tracing (Jaeger/Zipkin), correlated logs, per-service dashboards
+7. **Data Strategy**: Database-per-service, outbox pattern for event publishing, eventual consistency`;
+    } else if (isEcommerce) {
+      guidance += `**E-Commerce Backend:**
+1. **Product Catalog**: Full-text search (Elasticsearch/Meilisearch), faceted filtering, inventory tracking
+2. **Cart & Checkout**: Session-based or persistent carts, price calculation with tax/discount rules
+3. **Payment Integration**: Stripe/PayPal SDK, webhook verification, idempotent charge endpoints
+4. **Order Pipeline**: State machine (pending → paid → fulfilled → shipped → delivered), event-driven notifications
+5. **Inventory Management**: Stock reservation on checkout, automatic release on timeout/cancellation
+6. **Security**: PCI DSS compliance for payment data, rate limiting on checkout endpoints`;
+    } else if (isAuth) {
+      guidance += `**Authentication & Authorization:**
+1. **Token Strategy**: Short-lived access tokens (15min) + long-lived refresh tokens (7d) with rotation
+2. **OAuth2/OIDC**: Authorization code flow with PKCE for SPAs, client credentials for service-to-service
+3. **Password Hashing**: Argon2id (preferred) or bcrypt with cost factor 12+
+4. **Session Management**: HttpOnly secure cookies, SameSite=Strict, CSRF tokens
+5. **RBAC/ABAC**: Role-based for coarse access, attribute-based for fine-grained resource permissions
+6. **MFA**: TOTP (authenticator apps) as baseline, WebAuthn/passkeys for phishing resistance`;
+    } else if (isRealtime) {
+      guidance += `**Real-Time Backend:**
+1. **Protocol Choice**: WebSockets for bidirectional, SSE for server-push, long-polling as fallback
+2. **Connection Management**: Heartbeats, reconnection logic, connection pooling with Redis pub/sub
+3. **Scaling**: Sticky sessions or Redis adapter for multi-instance WebSocket broadcasting
+4. **Backpressure**: Rate limit message frequency per client, queue overflow protection
+5. **State Sync**: Conflict resolution strategy (last-write-wins, CRDTs, or operational transforms)
+6. **Fallback**: Graceful degradation to polling when WebSocket connections fail`;
+    } else {
+      // General backend guidance
+      guidance += `1. **Architecture Design**: Choose between monolith, microservices, or modular monolith based on team size and deployment needs
+2. **API Design**: RESTful with OpenAPI spec or GraphQL with schema-first approach, proper versioning (URL path or header)
+3. **Database Strategy**: Design normalized schema, add indexes for query patterns, implement connection pooling and caching layer
+4. **Authentication**: JWT with refresh token rotation, or session-based with HttpOnly cookies — depends on client type
+5. **Scalability**: Rate limiting (token bucket), horizontal scaling behind load balancer, cache-aside pattern with Redis
+6. **Monitoring**: Structured JSON logging, Prometheus metrics, health/readiness endpoints, distributed tracing`;
+    }
+
+    return guidance;
   }
 
   private generateDebuggingGuidance(input: string): string {

@@ -10,8 +10,9 @@ import {
 import { z } from 'zod';
 import { appendFile } from 'fs/promises';
 import { existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 // Phase 3A: Dynamic Skill Loading imports
 import { SkillRegistry } from './skill-registry.js';
@@ -1674,6 +1675,12 @@ ${skill.capabilities.slice(0, 3).map(cap => `• ${cap}`).join('\n')}`;
 
 // ── Initialise ───────────────────────────────────────────────────────────────
 
+/**
+ * Creates a fully configured skills-bridge MCP server.
+ * Transport-agnostic: caller connects their own transport (stdio, SSE, HTTP).
+ */
+export function createSkillsBridgeServer() {
+
 const skills = new SkillsBridge({
   skillsPath: process.env.SKILLS_PATH,
   enabledSkills: process.env.ENABLED_SKILLS?.split(','),
@@ -2345,9 +2352,13 @@ ${pendingApprovals.map((req, i) => `**${i + 1}. ${req.skill_name}**
   }
 });
 
-// ── Start ────────────────────────────────────────────────────────────────────
+return { server, skills, protocolHandler, stateManager, orchestrator };
+} // end createSkillsBridgeServer
+
+// ── Start (stdio) ────────────────────────────────────────────────────────────
 
 async function main() {
+  const { server, skills } = createSkillsBridgeServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
@@ -2361,7 +2372,12 @@ async function main() {
   console.error('Skills bridge MCP server running on stdio');
 }
 
-main().catch((err) => {
-  console.error('Server failed to start:', err);
-  process.exit(1);
-});
+// Only start stdio when run directly (not when imported by sse-server)
+const __currentFile = fileURLToPath(import.meta.url);
+const __entryFile = process.argv[1] ? resolve(process.argv[1]) : '';
+if (__currentFile === __entryFile) {
+  main().catch((err) => {
+    console.error('Server failed to start:', err);
+    process.exit(1);
+  });
+}

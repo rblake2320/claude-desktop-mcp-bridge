@@ -1,6 +1,6 @@
 {
   "name": "claude-desktop-mcp-bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP bridge to bring Claude Code capabilities to Claude Desktop",
   "main": "dist/index.js",
   "type": "module",
@@ -14,6 +14,7 @@
     "start:filesystem": "node dist/filesystem-bridge/server.js",
     "start:shell": "node dist/shell-bridge/server.js",
     "start:skills": "node dist/skills-bridge/server.js",
+    "start:remote": "node dist/skills-bridge/sse-server.js",
     "start:all": "concurrently \"npm:start:filesystem\" \"npm:start:shell\" \"npm:start:skills\"",
     "skill:check": "node scripts/skill-doctor.js",
     "skill:test-doctor": "node scripts/test-skill-doctor.js",
@@ -42,18 +43,20 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
+    "concurrently": "^8.0.0",
     "eslint": "^8.0.0",
     "jest": "^29.0.0",
-    "typescript": "^5.0.0",
-    "concurrently": "^8.0.0"
+    "typescript": "^5.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "zod": "^3.22.0",
+    "express": "^5.2.1",
     "glob": "^10.0.0",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "zod": "^3.22.0"
   }
 }

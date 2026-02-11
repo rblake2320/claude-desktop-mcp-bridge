@@ -10,8 +10,9 @@ import {
 import { z } from 'zod';
 import { appendFile } from 'fs/promises';
 import { existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 // Phase 3A: Dynamic Skill Loading imports
 import { SkillRegistry } from './skill-registry.js';
@@ -24,6 +25,12 @@ import {
   SkillCategory,
   SkillScanResult
 } from './types.js';
+
+// Phase 4: Cowork Integration modules
+import { UIRenderer } from '../shared/ui-renderer.js';
+import { Orchestrator } from '../shared/orchestrator.js';
+import { StateManager } from '../shared/state-manager.js';
+import { ProtocolHandler } from '../shared/protocol-handler.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -1668,14 +1675,38 @@ ${skill.capabilities.slice(0, 3).map(cap => `• ${cap}`).join('\n')}`;
 
 // ── Initialise ───────────────────────────────────────────────────────────────
 
+/**
+ * Creates a fully configured skills-bridge MCP server.
+ * Transport-agnostic: caller connects their own transport (stdio, SSE, HTTP).
+ */
+export function createSkillsBridgeServer() {
+
 const skills = new SkillsBridge({
   skillsPath: process.env.SKILLS_PATH,
   enabledSkills: process.env.ENABLED_SKILLS?.split(','),
   timeout: process.env.TIMEOUT ? parseInt(process.env.TIMEOUT, 10) : undefined,
 });
 
+// Phase 4: Initialize Cowork integration components
+const protocolHandler = new ProtocolHandler();
+const stateManager = StateManager.getInstance();
+stateManager.startSession();
+
+const orchestrator = new Orchestrator({
+  allowedPaths: process.env.ALLOWED_PATHS?.split(',') || [
+    process.env.USERPROFILE || process.env.HOME || '.',
+  ],
+  blockedCommands: (process.env.BLOCKED_COMMANDS?.split(',') || [
+    'rm', 'rmdir', 'del', 'format', 'fdisk', 'mkfs',
+    'dd', 'shutdown', 'reboot', 'halt', 'poweroff',
+  ]),
+  timeout: process.env.TIMEOUT ? parseInt(process.env.TIMEOUT, 10) : 30000,
+  maxFileSize: 10 * 1024 * 1024,
+  readOnly: process.env.READ_ONLY === 'true',
+});
+
 const server = new Server(
-  { name: 'skills-bridge', version: '0.1.0' },
+  { name: 'skills-bridge', version: '0.3.0' },
   { capabilities: { tools: {} } },
 );
 
@@ -1767,6 +1798,54 @@ const tools: Tool[] = [
   {
     name: 'get_pending_approvals',
     description: 'Get list of skills pending approval for trust management',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  // Phase 4: Cowork Integration Tools
+  {
+    name: 'healthcheck',
+    description: 'Diagnose bridge health: server version, base dir, log dir, writable dirs, protocol version, Cowork status',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'execute_skill',
+    description: 'Execute a skill with actual file/shell operations (write code, run commands). Turns guidance into action.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        skillName: {
+          type: 'string',
+          description: 'Name of the skill to execute (e.g., "ultra-frontend")',
+        },
+        task: {
+          type: 'string',
+          description: 'What to build or do (e.g., "create a React dashboard component")',
+        },
+        steps: {
+          type: 'array',
+          description: 'Explicit steps to execute (optional - auto-generated if omitted)',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Step name' },
+              type: { type: 'string', enum: ['read', 'write', 'edit', 'shell', 'glob'], description: 'Operation type' },
+              params: { type: 'object', description: 'Operation parameters' },
+            },
+            required: ['name', 'type', 'params'],
+          },
+        },
+      },
+      required: ['skillName', 'task'],
+    },
+  },
+  {
+    name: 'bridge_status',
+    description: 'Get session state, skill usage stats, and bridge health across all bridges',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -2038,6 +2117,197 @@ ${pendingApprovals.map((req, i) => `**${i + 1}. ${req.skill_name}**
         return { content: [{ type: 'text', text: approvalsText }] };
       }
 
+      // Phase 4: Cowork Integration Handlers
+      case 'healthcheck': {
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'healthcheck',
+          reason: 'Running bridge health diagnostics'
+        });
+
+        const scriptDir = new URL('.', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1');
+        const baseDir = join(scriptDir, '..', '..');
+        const logDir = SkillsSecurityLogger['logDir'] || join(baseDir, 'logs');
+        const dataDir = join(baseDir, 'data');
+
+        const protocolInfo = protocolHandler.getProtocolVersion();
+        const isCowork = protocolHandler.isCoworkEnabled();
+        const clientInfo = protocolHandler.getClientInfo();
+
+        const health = {
+          server: {
+            name: 'skills-bridge',
+            version: '0.3.0',
+            uptime: Math.floor(process.uptime()),
+            pid: process.pid,
+            nodeVersion: process.version,
+          },
+          paths: {
+            baseDir,
+            logDir,
+            dataDir,
+            cwd: process.cwd(),
+            scriptDir,
+            logDirWritable: existsSync(logDir),
+            dataDirWritable: existsSync(dataDir),
+          },
+          protocol: {
+            version: protocolInfo,
+            isCowork,
+            clientName: clientInfo.name,
+            clientVersion: clientInfo.version,
+            uiExtensionAvailable: protocolHandler.hasUIExtension(),
+          },
+          skills: {
+            total: skills.getAvailableSkills().length,
+            sessionId: stateManager.getSessionId(),
+          },
+          compatibility: protocolHandler.getCompatibilityNotes(),
+        };
+
+        const healthText = UIRenderer.isUIEnabled()
+          ? UIRenderer.renderStats(
+              Object.fromEntries([
+                ['Server', `${health.server.name} v${health.server.version}`],
+                ['Uptime', `${health.server.uptime}s`],
+                ['Node', health.server.nodeVersion],
+                ['Protocol', health.protocol.version],
+                ['Cowork', health.protocol.isCowork ? 'Yes' : 'No'],
+                ['UI Extension', health.protocol.uiExtensionAvailable ? 'Available' : 'Not available'],
+                ['Client', `${health.protocol.clientName} v${health.protocol.clientVersion}`],
+                ['Base Dir', health.paths.baseDir],
+                ['CWD', health.paths.cwd],
+                ['Log Dir', `${health.paths.logDir} (${health.paths.logDirWritable ? 'writable' : 'NOT writable'})`],
+                ['Total Skills', health.skills.total],
+                ['Session', health.skills.sessionId],
+              ])
+            ).text
+          : JSON.stringify(health, null, 2);
+
+        stateManager.recordBridgeHealth('skills-bridge', 'healthy', 'Healthcheck passed');
+
+        await SkillsSecurityLogger.logToolExecution('healthcheck', {}, 'SUCCESS', 'Health diagnostics complete');
+        return { content: [{ type: 'text', text: healthText }] };
+      }
+
+      case 'execute_skill': {
+        const executeArgs = args as { skillName: string; task: string; steps?: Array<{ name: string; type: string; params: Record<string, any> }> };
+
+        if (!executeArgs.skillName || !executeArgs.task) {
+          throw new Error('skillName and task are required');
+        }
+
+        // Validate skill name
+        const execSkillValidation = SkillSecurityValidator.validateSkillName(executeArgs.skillName);
+        if (!execSkillValidation.valid) {
+          throw new Error(execSkillValidation.reason || 'Invalid skill');
+        }
+
+        // Scan task input for injection
+        const taskScan = SecurityScanner.scanInput(executeArgs.task);
+        if (!taskScan.safe) {
+          throw new Error(`Task input failed security scan: ${taskScan.issues.join(', ')}`);
+        }
+
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'SKILL_ACCESS',
+          severity: 'LOW',
+          operation: 'execute_skill',
+          skillName: executeArgs.skillName,
+          reason: `Executing skill with orchestration: ${executeArgs.task.substring(0, 100)}`
+        });
+
+        const startTime = Date.now();
+
+        // Get skill guidance first
+        const guidance = await skills.applySkill(executeArgs.skillName, executeArgs.task);
+
+        // Execute steps if provided
+        let orchestrationResult: string | undefined;
+        if (executeArgs.steps && executeArgs.steps.length > 0) {
+          const typedSteps = executeArgs.steps.map(s => ({
+            name: s.name,
+            type: s.type as 'read' | 'write' | 'edit' | 'shell' | 'glob',
+            params: s.params,
+          }));
+          const result = await orchestrator.executeSteps(typedSteps);
+          orchestrationResult = UIRenderer.isUIEnabled()
+            ? UIRenderer.renderOrchestrationResult(
+                result.steps.map(s => ({
+                  name: s.name,
+                  status: s.status === 'skipped' ? 'pending' : s.status,
+                  output: s.output || s.error,
+                }))
+              ).text
+            : result.summary;
+        }
+
+        const durationMs = Date.now() - startTime;
+        stateManager.recordSkillUsage(executeArgs.skillName, executeArgs.task, true, durationMs);
+
+        let response = `**EXECUTING: ${executeArgs.skillName.toUpperCase()}**\n\n`;
+        response += guidance;
+        if (orchestrationResult) {
+          response += `\n\n---\n\n**Orchestration Results:**\n${orchestrationResult}`;
+        }
+
+        await SkillsSecurityLogger.logToolExecution('execute_skill', executeArgs, 'SUCCESS',
+          `Executed ${executeArgs.skillName} in ${durationMs}ms`);
+        return { content: [{ type: 'text', text: response }] };
+      }
+
+      case 'bridge_status': {
+        await SkillsSecurityLogger.logSecurityEvent({
+          type: 'TOOL_EXECUTION',
+          severity: 'LOW',
+          operation: 'bridge_status',
+          reason: 'Getting bridge status and session state'
+        });
+
+        const usageStats = stateManager.getSkillUsageStats();
+        const recentSkills = stateManager.getRecentSkills(5);
+        const mostUsed = stateManager.getMostUsedSkills(5);
+        const bridgeHealth = stateManager.getBridgeHealth();
+        const sessionId = stateManager.getSessionId();
+
+        const statusParts = [
+          `**Bridge Status Report**\n`,
+          `**Session**: ${sessionId}`,
+          `**Protocol**: ${protocolHandler.getProtocolVersion()} (${protocolHandler.isCoworkEnabled() ? 'Cowork' : 'Classic'})`,
+          `**UI Extension**: ${UIRenderer.isUIEnabled() ? 'Active' : 'Inactive'}`,
+          `\n**Skill Usage Stats**:`,
+          `- Total Invocations: ${usageStats.totalInvocations}`,
+          `- Success Rate: ${(usageStats.successRate * 100).toFixed(1)}%`,
+          `- Avg Duration: ${usageStats.avgDurationMs.toFixed(0)}ms`,
+          `- Unique Skills Used: ${usageStats.uniqueSkillsUsed}`,
+        ];
+
+        if (mostUsed.length > 0) {
+          statusParts.push(`\n**Most Used Skills**:`);
+          for (const s of mostUsed) {
+            statusParts.push(`- ${s.name}: ${s.count} uses (avg ${s.avgDurationMs.toFixed(0)}ms)`);
+          }
+        }
+
+        if (recentSkills.length > 0) {
+          statusParts.push(`\n**Recent Skills**:`);
+          for (const s of recentSkills) {
+            statusParts.push(`- ${s.skillName} (${s.success ? 'OK' : 'FAIL'}) - ${new Date(s.timestamp).toLocaleTimeString()}`);
+          }
+        }
+
+        if (Object.keys(bridgeHealth).length > 0) {
+          statusParts.push(`\n**Bridge Health**:`);
+          for (const [name, health] of Object.entries(bridgeHealth)) {
+            statusParts.push(`- ${name}: ${health.status} (last: ${new Date(health.lastCheck).toLocaleTimeString()})`);
+          }
+        }
+
+        await SkillsSecurityLogger.logToolExecution('bridge_status', {}, 'SUCCESS', 'Status report generated');
+        return { content: [{ type: 'text', text: statusParts.join('\n') }] };
+      }
+
       default:
         // Log unknown tool attempts for security analysis
         await SkillsSecurityLogger.logSecurityEvent({
@@ -2082,9 +2352,13 @@ ${pendingApprovals.map((req, i) => `**${i + 1}. ${req.skill_name}**
   }
 });
 
-// ── Start ────────────────────────────────────────────────────────────────────
+return { server, skills, protocolHandler, stateManager, orchestrator };
+} // end createSkillsBridgeServer
+
+// ── Start (stdio) ────────────────────────────────────────────────────────────
 
 async function main() {
+  const { server, skills } = createSkillsBridgeServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
@@ -2098,7 +2372,12 @@ async function main() {
   console.error('Skills bridge MCP server running on stdio');
 }
 
-main().catch((err) => {
-  console.error('Server failed to start:', err);
-  process.exit(1);
-});
+// Only start stdio when run directly (not when imported by sse-server)
+const __currentFile = fileURLToPath(import.meta.url);
+const __entryFile = process.argv[1] ? resolve(process.argv[1]) : '';
+if (__currentFile === __entryFile) {
+  main().catch((err) => {
+    console.error('Server failed to start:', err);
+    process.exit(1);
+  });
+}

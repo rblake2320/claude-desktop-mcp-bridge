@@ -1,0 +1,46 @@
+[Unit]
+Description=Skills Bridge MCP Server (SSE transport)
+Documentation=https://github.com/rblake2320/claude-desktop-mcp-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mcp
+Group=mcp
+WorkingDirectory=/opt/skills-bridge
+ExecStart=/usr/bin/node dist/skills-bridge/sse-server.js
+EnvironmentFile=/opt/skills-bridge/.env
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=skills-bridge
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/skills-bridge/logs /opt/skills-bridge/data /home/mcp/.claude
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+RestrictNamespaces=true
+RestrictRealtime=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=1G
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

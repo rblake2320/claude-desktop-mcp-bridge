@@ -37,12 +37,21 @@ const PATH_TRAVERSAL_PATTERNS = [
 
 /** Audit logger for filesystem security monitoring */
 class FileSystemSecurityLogger {
-  private static logDir = join(process.cwd(), 'logs');
+  private static logDir = join(new URL('.', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'), '..', '..', 'logs');
   private static securityLogPath = join(FileSystemSecurityLogger.logDir, 'filesystem-bridge-security.log');
 
   static init() {
-    if (!existsSync(FileSystemSecurityLogger.logDir)) {
-      mkdirSync(FileSystemSecurityLogger.logDir, { recursive: true });
+    try {
+      if (!existsSync(FileSystemSecurityLogger.logDir)) {
+        mkdirSync(FileSystemSecurityLogger.logDir, { recursive: true });
+      }
+    } catch {
+      // Fallback: use temp directory if project dir isn't writable (e.g. CWD is system32)
+      FileSystemSecurityLogger.logDir = join(process.env.TEMP || process.env.TMP || '/tmp', 'claude-mcp-bridge-logs');
+      FileSystemSecurityLogger.securityLogPath = join(FileSystemSecurityLogger.logDir, 'filesystem-bridge-security.log');
+      if (!existsSync(FileSystemSecurityLogger.logDir)) {
+        mkdirSync(FileSystemSecurityLogger.logDir, { recursive: true });
+      }
     }
   }
 

@@ -201,12 +201,21 @@ class SecurityScanner {
 
 /** Enhanced audit logger for skills-bridge security monitoring with structured JSON logging */
 class SkillsSecurityLogger {
-  private static logDir = join(process.cwd(), 'logs');
+  private static logDir = join(new URL('.', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'), '..', '..', 'logs');
   private static securityLogPath = join(SkillsSecurityLogger.logDir, 'skills-bridge-security.log');
 
   static init() {
-    if (!existsSync(SkillsSecurityLogger.logDir)) {
-      mkdirSync(SkillsSecurityLogger.logDir, { recursive: true });
+    try {
+      if (!existsSync(SkillsSecurityLogger.logDir)) {
+        mkdirSync(SkillsSecurityLogger.logDir, { recursive: true });
+      }
+    } catch {
+      // Fallback: use temp directory if project dir isn't writable (e.g. CWD is system32)
+      SkillsSecurityLogger.logDir = join(process.env.TEMP || process.env.TMP || '/tmp', 'claude-mcp-bridge-logs');
+      SkillsSecurityLogger.securityLogPath = join(SkillsSecurityLogger.logDir, 'skills-bridge-security.log');
+      if (!existsSync(SkillsSecurityLogger.logDir)) {
+        mkdirSync(SkillsSecurityLogger.logDir, { recursive: true });
+      }
     }
   }
 

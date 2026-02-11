@@ -35,12 +35,21 @@ const COMMAND_INJECTION_PATTERNS = [
 
 /** Audit logger for security monitoring */
 class SecurityAuditLogger {
-  private static logDir = join(process.cwd(), 'logs');
+  private static logDir = join(new URL('.', import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'), '..', '..', 'logs');
   private static securityLogPath = join(SecurityAuditLogger.logDir, 'shell-bridge-security.log');
 
   static init() {
-    if (!existsSync(SecurityAuditLogger.logDir)) {
-      mkdirSync(SecurityAuditLogger.logDir, { recursive: true });
+    try {
+      if (!existsSync(SecurityAuditLogger.logDir)) {
+        mkdirSync(SecurityAuditLogger.logDir, { recursive: true });
+      }
+    } catch {
+      // Fallback: use temp directory if project dir isn't writable (e.g. CWD is system32)
+      SecurityAuditLogger.logDir = join(process.env.TEMP || process.env.TMP || '/tmp', 'claude-mcp-bridge-logs');
+      SecurityAuditLogger.securityLogPath = join(SecurityAuditLogger.logDir, 'shell-bridge-security.log');
+      if (!existsSync(SecurityAuditLogger.logDir)) {
+        mkdirSync(SecurityAuditLogger.logDir, { recursive: true });
+      }
     }
   }
 

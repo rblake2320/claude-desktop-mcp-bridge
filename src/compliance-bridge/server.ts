@@ -287,7 +287,7 @@ const tools: Tool[] = [
   },
   {
     name: 'compliance.create_tickets',
-    description: 'Create GitHub Issues from scan findings. Always generates a preview plan first (dryRun=true). To execute, approve the plan first with compliance.approve_ticket_plan, then call again with approvedPlanId and dryRun=false.',
+    description: 'Create GitHub Issues or Jira tickets from scan findings. Always generates a preview plan first (dryRun=true). To execute, approve the plan first with compliance.approve_ticket_plan, then call again with approvedPlanId and dryRun=false. For Jira: set target="jira" and provide targetRepo="PROJECT_KEY" (or set JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY env vars).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -295,7 +295,7 @@ const tools: Tool[] = [
         runId: { type: 'string', description: 'Run ID from a previous scan (defaults to most recent)' },
         maxItems: { type: 'number', default: 10, description: 'Maximum tickets to create (default 10)' },
         target: { type: 'string', enum: ['github', 'jira'], default: 'github', description: 'Ticket system target' },
-        targetRepo: { type: 'string', description: 'Explicit owner/name override (e.g. "acme/api"). If omitted, derived from git remote.' },
+        targetRepo: { type: 'string', description: 'For GitHub: owner/name override (e.g. "acme/api"). For Jira: project key (e.g. "SEC"). If omitted, derived from git remote (GitHub) or JIRA_PROJECT_KEY env (Jira).' },
         dryRun: { type: 'boolean', default: true, description: 'Preview plan without creating tickets (default true)' },
         approvedPlanId: { type: 'string', description: 'Plan ID from a previously approved dry-run (required for execution)' },
         reopenClosed: { type: 'boolean', default: false, description: 'Reopen closed duplicate issues instead of skipping (default false)' },

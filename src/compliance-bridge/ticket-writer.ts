@@ -1,13 +1,13 @@
 /**
- * Ticket Writer - GitHub Issues Integration
+ * Ticket Writer - GitHub Issues + Jira Integration
  *
- * Creates GitHub Issues from compliance scan findings with:
+ * Creates GitHub Issues or Jira tickets from compliance scan findings with:
  *   - Deterministic deduplication (CN-FINDING-ID markers)
  *   - Approval gate (file-based, tamper-evident)
  *   - Enterprise-grade ticket formatting
- *   - Rate limiting + backoff for GitHub API
+ *   - Rate limiting + backoff for API calls
  *   - Label policy (require-existing vs create-if-missing)
- *   - Repo targeting defense (repoFullName in plan hash)
+ *   - Repo/project targeting defense (identity in plan hash)
  *   - Reopen-closed dedup handling
  *
  * Uses Node fetch (no shell) to keep the command allowlist small.
@@ -226,6 +226,220 @@ async function reopenIssue(
   if (!res.ok) {
     console.error(`[ticket-writer] Failed to reopen issue #${issueNumber}: ${res.status}`);
   }
+}
+
+// ── Jira API Client ──────────────────────────────────────────────
+
+interface JiraConfig {
+  baseUrl: string;   // e.g. https://yoursite.atlassian.net
+  email: string;
+  apiToken: string;
+  projectKey: string;
+}
+
+function getJiraConfig(): JiraConfig {
+  const baseUrl = process.env.JIRA_BASE_URL;
+  const email = process.env.JIRA_EMAIL;
+  const apiToken = process.env.JIRA_API_TOKEN;
+  const projectKey = process.env.JIRA_PROJECT_KEY ?? '';
+
+  if (!baseUrl || !email || !apiToken) {
+    throw new Error(
+      'Jira credentials not found. Set JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN environment variables.'
+    );
+  }
+
+  // Normalize base URL (strip trailing slash)
+  return {
+    baseUrl: baseUrl.replace(/\/+$/, ''),
+    email,
+    apiToken,
+    projectKey,
+  };
+}
+
+function jiraHeaders(email: string, apiToken: string): Record<string, string> {
+  const auth = Buffer.from(`${email}:${apiToken}`).toString('base64');
+  return {
+    Authorization: `Basic ${auth}`,
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'User-Agent': 'compliance-navigator/0.4.0',
+  };
+}
+
+/**
+ * Rate-limit aware Jira fetch wrapper.
+ * Handles 429 with Retry-After header.
+ */
+async function jiraFetch(
+  url: string,
+  options: RequestInit & { headers: Record<string, string> },
+): Promise<Response> {
+  const res = await fetch(url, options);
+
+  if (res.status === 429) {
+    const retryAfter = res.headers.get('retry-after');
+    const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : RATE_LIMIT_BACKOFF_MS;
+    console.error(`[ticket-writer] Jira rate limited (429). Backing off ${waitMs}ms.`);
+    await sleep(waitMs);
+    return fetch(url, options);
+  }
+
+  return res;
+}
+
+/**
+ * Search Jira issues for a deduplication marker using JQL.
+ */
+async function jiraSearchForDuplicate(
+  config: JiraConfig,
+  projectKey: string,
+  findingId: string,
+): Promise<DedupeResult> {
+  const jql = encodeURIComponent(
+    `project = "${projectKey}" AND description ~ "${MARKER_PREFIX}: ${findingId}"`
+  );
+  const url = `${config.baseUrl}/rest/api/3/search?jql=${jql}&maxResults=1&fields=key,summary,status`;
+
+  const res = await jiraFetch(url, { headers: jiraHeaders(config.email, config.apiToken) });
+  if (!res.ok) {
+    console.error(`[ticket-writer] Jira search failed: ${res.status} ${res.statusText}`);
+    return { found: false };
+  }
+
+  const data = (await res.json()) as {
+    total: number;
+    issues: Array<{
+      key: string;
+      fields: {
+        status: { name: string; statusCategory: { key: string } };
+      };
+    }>;
+  };
+
+  if (data.total > 0 && data.issues[0]) {
+    const issue = data.issues[0];
+    const isDone = issue.fields.status.statusCategory.key === 'done';
+    return {
+      found: true,
+      url: `${config.baseUrl}/browse/${issue.key}`,
+      number: parseInt(issue.key.split('-')[1] ?? '0', 10),
+      state: isDone ? 'closed' : 'open',
+    };
+  }
+  return { found: false };
+}
+
+/**
+ * Reopen (transition) a done Jira issue back to its initial status.
+ * Finds the first available transition and applies it.
+ */
+async function jiraReopenIssue(
+  config: JiraConfig,
+  issueKey: string,
+): Promise<void> {
+  // Get available transitions
+  const url = `${config.baseUrl}/rest/api/3/issue/${issueKey}/transitions`;
+  const res = await jiraFetch(url, { headers: jiraHeaders(config.email, config.apiToken) });
+  if (!res.ok) {
+    console.error(`[ticket-writer] Failed to get Jira transitions for ${issueKey}: ${res.status}`);
+    return;
+  }
+
+  const data = (await res.json()) as {
+    transitions: Array<{ id: string; name: string; to: { statusCategory: { key: string } } }>;
+  };
+
+  // Find a transition that goes to "To Do" or "new" category
+  const reopenTransition = data.transitions.find(
+    t => t.to.statusCategory.key === 'new' || t.to.statusCategory.key === 'indeterminate'
+  );
+  if (!reopenTransition) {
+    console.error(`[ticket-writer] No reopen transition found for ${issueKey}`);
+    return;
+  }
+
+  const transRes = await jiraFetch(url, {
+    method: 'POST',
+    headers: jiraHeaders(config.email, config.apiToken),
+    body: JSON.stringify({ transition: { id: reopenTransition.id } }),
+  });
+  if (!transRes.ok) {
+    console.error(`[ticket-writer] Failed to reopen Jira issue ${issueKey}: ${transRes.status}`);
+  }
+}
+
+/**
+ * Create a Jira issue.
+ */
+async function createJiraIssue(
+  config: JiraConfig,
+  projectKey: string,
+  title: string,
+  body: string,
+  labels: string[],
+): Promise<{ url: string; number: number; key: string }> {
+  const url = `${config.baseUrl}/rest/api/3/issue`;
+
+  // Jira labels must be single words (no spaces, no colons in classic labels)
+  // Convert our label format: "severity:high" -> "severity-high"
+  const jiraLabels = labels.map(l => l.replace(/:/g, '-'));
+
+  const res = await jiraFetch(url, {
+    method: 'POST',
+    headers: jiraHeaders(config.email, config.apiToken),
+    body: JSON.stringify({
+      fields: {
+        project: { key: projectKey },
+        summary: title,
+        description: {
+          type: 'doc',
+          version: 1,
+          content: [{
+            type: 'paragraph',
+            content: [{ type: 'text', text: body }],
+          }],
+        },
+        issuetype: { name: 'Task' },
+        labels: jiraLabels,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Jira issue creation failed: ${res.status} ${errBody}`);
+  }
+
+  const data = (await res.json()) as { key: string; id: string };
+  const issueNumber = parseInt(data.key.split('-')[1] ?? '0', 10);
+  return {
+    url: `${config.baseUrl}/browse/${data.key}`,
+    number: issueNumber,
+    key: data.key,
+  };
+}
+
+/**
+ * Ensure Jira labels exist. Jira auto-creates labels on use,
+ * so create-if-missing is the natural behavior.
+ * For require-existing, we check and warn.
+ */
+async function ensureJiraLabels(
+  config: JiraConfig,
+  labels: Set<string>,
+  policy: LabelPolicy,
+): Promise<void> {
+  if (policy === 'require-existing') {
+    // Jira doesn't have a clean "list all labels" endpoint,
+    // so we just log a warning that we'll use whatever labels are specified.
+    console.error(
+      `[ticket-writer] Jira labelPolicy=require-existing: labels will be applied as-is. ` +
+      `Jira auto-creates labels that don't exist.`
+    );
+  }
+  // For both policies, Jira handles label creation transparently.
 }
 
 // ── Label Management ─────────────────────────────────────────────
@@ -515,7 +729,7 @@ function buildPlanItems(
  * Create tickets (dry-run or execute).
  *
  * Dry-run: builds plan, checks deduplication, saves pending plan.
- * Execute: requires approved plan, creates GitHub issues.
+ * Execute: requires approved plan, creates GitHub Issues or Jira tickets.
  */
 export async function handleCreateTickets(
   repoPath: string,
@@ -529,16 +743,35 @@ export async function handleCreateTickets(
   reopenClosed?: boolean,
   labelPolicy?: LabelPolicy,
 ): Promise<CreateTicketsResponse> {
-  // Resolve repo identity
+  const isJira = target === 'jira';
+
+  // Resolve identity based on target
   let repo: RepoIdentity;
-  if (targetRepo) {
-    const [owner, name] = targetRepo.split('/');
-    repo = { owner, name };
+  let jiraConfig: JiraConfig | undefined;
+  let jiraProjectKey = '';
+
+  if (isJira) {
+    jiraConfig = getJiraConfig();
+    // For Jira, targetRepo is "PROJECT_KEY" or use JIRA_PROJECT_KEY env
+    jiraProjectKey = targetRepo ?? jiraConfig.projectKey;
+    if (!jiraProjectKey) {
+      throw new Error(
+        'Jira project key required. Set targetRepo="PROJECT_KEY" or JIRA_PROJECT_KEY env var.'
+      );
+    }
+    // Use project key as the "repo" identity for plan hashing
+    repo = { owner: 'jira', name: jiraProjectKey };
   } else {
-    repo = resolveRepoIdentity(repoPath);
+    if (targetRepo) {
+      const [owner, name] = targetRepo.split('/');
+      repo = { owner, name };
+    } else {
+      repo = resolveRepoIdentity(repoPath);
+    }
   }
+
   const repoFullName = `${repo.owner}/${repo.name}`;
-  const token = getGitHubToken();
+  const token = isJira ? '' : getGitHubToken();
   const policy = labelPolicy ?? 'require-existing';
 
   // Build plan items
@@ -551,10 +784,12 @@ export async function handleCreateTickets(
   const reopenedItems: { findingId: string; url: string; number: number }[] = [];
 
   for (const item of planItems) {
-    const dup = await searchForDuplicate(repo.owner, repo.name, item.findingId, token);
+    const dup = isJira
+      ? await jiraSearchForDuplicate(jiraConfig!, jiraProjectKey, item.findingId)
+      : await searchForDuplicate(repo.owner, repo.name, item.findingId, token);
+
     if (dup.found && dup.url) {
       if (dup.state === 'closed' && reopenClosed && dup.number) {
-        // Mark for reopening (or reopen immediately in execute mode)
         reopenedItems.push({ findingId: item.findingId, url: dup.url, number: dup.number });
       } else {
         skippedAsDuplicate.push({ findingId: item.findingId, existingUrl: dup.url });
@@ -562,7 +797,6 @@ export async function handleCreateTickets(
     } else {
       wouldCreate.push(item);
     }
-    // Gentle pacing for search API
     await sleep(200);
   }
 
@@ -620,10 +854,10 @@ export async function handleCreateTickets(
     );
   }
 
-  // Verify repo matches (cross-repo replay prevention)
+  // Verify repo/project matches (cross-target replay prevention)
   if (approval.repoFullName !== pendingPlan.repoFullName) {
     throw new Error(
-      `Repo mismatch: approval is for ${approval.repoFullName} but plan targets ${pendingPlan.repoFullName}`
+      `Target mismatch: approval is for ${approval.repoFullName} but plan targets ${pendingPlan.repoFullName}`
     );
   }
 
@@ -634,30 +868,47 @@ export async function handleCreateTickets(
       allLabels.add(label);
     }
   }
-  await ensureLabels(repo.owner, repo.name, allLabels, policy, token);
+  if (isJira) {
+    await ensureJiraLabels(jiraConfig!, allLabels, policy);
+  } else {
+    await ensureLabels(repo.owner, repo.name, allLabels, policy, token);
+  }
 
   // Reopen closed issues if requested
   for (const item of reopenedItems) {
-    await reopenIssue(repo.owner, repo.name, item.number, token);
+    if (isJira) {
+      // Reconstruct Jira issue key from URL for transition API
+      const issueKey = item.url.split('/browse/')[1];
+      if (issueKey) await jiraReopenIssue(jiraConfig!, issueKey);
+    } else {
+      await reopenIssue(repo.owner, repo.name, item.number, token);
+    }
     await sleep(BATCH_DELAY_MS);
   }
 
-  // Create issues with rate-limited batching
+  // Create issues/tickets with rate-limited batching
   const created: { findingId: string; url: string; number: number }[] = [];
   for (let i = 0; i < pendingPlan.items.length; i++) {
     const item = pendingPlan.items[i];
     try {
-      const result = await createGitHubIssue(
-        repo.owner, repo.name,
-        item.title, item.body, item.labels,
-        token,
-      );
-      created.push({ findingId: item.findingId, url: result.url, number: result.number });
+      if (isJira) {
+        const result = await createJiraIssue(
+          jiraConfig!, jiraProjectKey,
+          item.title, item.body, item.labels,
+        );
+        created.push({ findingId: item.findingId, url: result.url, number: result.number });
+      } else {
+        const result = await createGitHubIssue(
+          repo.owner, repo.name,
+          item.title, item.body, item.labels,
+          token,
+        );
+        created.push({ findingId: item.findingId, url: result.url, number: result.number });
+      }
     } catch (err) {
-      console.error(`[ticket-writer] Failed to create issue for ${item.findingId}: ${(err as Error).message}`);
+      console.error(`[ticket-writer] Failed to create ticket for ${item.findingId}: ${(err as Error).message}`);
     }
 
-    // Batch delay every MAX_CONCURRENT issues
     if ((i + 1) % MAX_CONCURRENT === 0 && i < pendingPlan.items.length - 1) {
       await sleep(BATCH_DELAY_MS);
     }

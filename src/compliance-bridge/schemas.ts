@@ -42,7 +42,10 @@ export const CreateTicketsSchema = z.object({
   runId: z.string().optional(),
   maxItems: z.number().min(1).max(100).default(10),
   target: z.enum(['github', 'jira']).default('github'),
-  targetRepo: z.string().regex(/^[^/]+\/[^/]+$/, 'Must be owner/name format').optional(),
+  targetRepo: z.string().min(1).max(200).regex(
+    /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)?$/,
+    'Must be owner/name (GitHub) or PROJECT_KEY (Jira)'
+  ).optional(),
   dryRun: z.boolean().default(true),
   approvedPlanId: z.string().optional(),
   reopenClosed: z.boolean().default(false),

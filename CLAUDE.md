@@ -29,7 +29,7 @@ Compliance Navigator is a standalone MCP server: `src/compliance-bridge/server.t
 
 ## SECURITY MODEL (must remain enforced)
 
-- gitleaks/checkov spawn with `shell: false` on all platforms (.exe on Windows, direct exec on Unix); npm.cmd uses `shell: true` with cmd metachar hard-rejection + double-quote sanitization (scanner allowlist stays tight — 6 regex patterns only)
+- gitleaks spawns with `shell: false` on all platforms (.exe on Windows, direct exec on Unix); checkov prefers `shell: false` via .exe but may fall back to .cmd (shell: true with metachar rejection) if .exe is not found on Windows; npm.cmd uses `shell: true` with cmd metachar hard-rejection + double-quote sanitization (scanner allowlist stays tight — 6 regex patterns only)
 - GitHub/Jira integrations are fetch() APIs using env tokens
 - All writes pinned under `<repo>/.compliance/` with safePath validation
 - Ticket workflow has dry-run → approve → execute with planHash binding and repoFullName included to prevent cross-repo replay
@@ -109,4 +109,4 @@ All bridges are standalone MCP servers using StdioServerTransport.
 - `.github/workflows/ci.yml` — CI: build + smoke test (9 tools + resources)
 - `.github/workflows/compliance.yml` — GitHub Action: scan + export + upload artifact + optional tickets
 - `scripts/run-compliance.mjs` — CI runner script (JSON-RPC stdio, --fail-on, JSON summary output)
-- `scripts/test-fixture-e2e.mjs` — 62-assertion E2E suite (real execution, no mocks)
+- `scripts/test-fixture-e2e.mjs` — 63-assertion E2E suite (real execution, no mocks)

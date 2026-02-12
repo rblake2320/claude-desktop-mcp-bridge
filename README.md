@@ -66,12 +66,53 @@ Exposes Claude Code's **entire 22-skill library**:
 
 SOC2-lite audit in 3 tools -- scan a repo, generate an auditor-ready packet, get a prioritized fix plan. Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps all findings to 20 SOC2 Trust Services controls, and estimates remediation ROI.
 
-**Tools:**
-- `compliance.scan_repo` -- Run all 3 scanners, normalize findings, map SOC2 controls, compute coverage + ROI
-- `compliance.generate_audit_packet` -- Write evidence-grade `audit_packet/` directory (index.md, findings.json, coverage.json, roi.json, evidence/)
-- `compliance.plan_remediation` -- Prioritized remediation steps with effort estimates
+#### Quickstart
 
-**Output structure:**
+```bash
+npm install && npm run build
+```
+
+Add to Claude Desktop MCP config (`claude_desktop_config.json`):
+```json
+{
+  "compliance-bridge": {
+    "command": "node",
+    "args": ["./dist/compliance-bridge/server.js"]
+  }
+}
+```
+
+Then ask Claude: *"Run a compliance scan on this repo"* -- or call the tools directly:
+
+```jsonc
+// 1. Scan
+{"method":"tools/call","params":{"name":"compliance.scan_repo","arguments":{"repoPath":"/path/to/repo"}}}
+
+// Response includes:
+// findings[], countsBySeverity, countsByScanner, controlCoverage{coveragePct, coveragePctPotential, coveragePctFull},
+// roiEstimate{hoursSavedConservative, hoursSavedLikely}, scannerStatuses[], manifest{policy, excludedPaths}
+
+// 2. Generate audit packet
+{"method":"tools/call","params":{"name":"compliance.generate_audit_packet","arguments":{"repoPath":"/path/to/repo"}}}
+
+// 3. Get remediation plan
+{"method":"tools/call","params":{"name":"compliance.plan_remediation","arguments":{"repoPath":"/path/to/repo"}}}
+```
+
+**Typical output:** 42 findings across 3 scanners, 100% SOC2 control coverage, 19-34 hours estimated remediation ROI.
+
+#### Security Model
+
+These invariants hold for every scan:
+
+1. **Commands are argv-validated before execution.** Only 6 regex patterns pass the allowlist: `gitleaks detect`, `npm audit`, `checkov -d`, and their `--version` probes. Everything else throws.
+2. **No arbitrary shell evaluation.** On Linux/macOS, scanners spawn with `shell: false` (direct exec). On Windows, `shell: true` is required for `.cmd` resolution but `windowsVerbatimArguments: true` prevents injection. The manifest records which mode was used.
+3. **All writes are confined to `<repo>/.compliance/`.** The path policy validates every write target against the repo root. Directory traversal (`../`) is blocked.
+4. **Tamper-evident audit chain.** Every tool invocation (start, end, command run, file written) is logged to `logs/compliance-audit-chain.jsonl` with SHA-256 hash chaining. Each entry includes `prevHash` and `hash` so any modification to the log is detectable.
+5. **Self-documenting manifest.** Every audit packet includes `manifest.json` recording: allowed commands, shell execution mode, excluded scan paths, scanner versions, OS, Node version, and repo commit hash. The packet is reviewable without access to the server code.
+
+#### Output Structure
+
 ```
 <repo>/.compliance/runs/<runId>/
   scan_result.json          # Full scan data
@@ -87,32 +128,6 @@ SOC2-lite audit in 3 tools -- scan a repo, generate an auditor-ready packet, get
     manifest.json           # Deterministic export metadata + security policy
     evidence/               # Copies of raw outputs
 ```
-
-**Security gates:**
-- **Command allowlist** -- Only 3 scanner commands + 3 version commands permitted (regex-validated)
-- **Path policy** -- All filesystem writes pinned to `<repo>/.compliance/` -- directory escape blocked
-- **Audit chain** -- Tamper-evident JSONL with SHA-256 hash chain (who/what/when)
-- **Manifest policy** -- Every audit packet self-documents: which commands ran, shell mode, excluded paths
-
-**Demo (60 seconds):**
-```bash
-# Build
-npm run build
-
-# Scan a repo
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"compliance.scan_repo","arguments":{"repoPath":"/path/to/repo"}}}' | node dist/compliance-bridge/server.js
-
-# Or add to Claude Desktop config:
-{
-  "compliance-bridge": {
-    "command": "node",
-    "args": ["./dist/compliance-bridge/server.js"]
-  }
-}
-# Then ask Claude: "Run a compliance scan on this repo"
-```
-
-**Typical output:** 42 findings across 3 scanners, 100% SOC2 control coverage, 19-34 hours estimated remediation ROI.
 
 ### 5. `task-bridge` (Planned)
 Task management system:

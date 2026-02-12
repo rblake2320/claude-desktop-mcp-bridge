@@ -15,6 +15,7 @@ export const TOOL_RISK: Record<string, RiskTier> = {
   'compliance.verify_audit_chain': 'low',
   'compliance.open_dashboard': 'low',
   'compliance.create_demo_fixture': 'low',
+  'compliance.export_audit_packet': 'medium',
 };
 
 /**

@@ -64,7 +64,7 @@ Exposes Claude Code's **entire 22-skill library**:
 
 **Compliance Navigator turns MCP from tool plumbing into a structured compliance workflow engine.**
 
-SOC2-lite scanning in 8 tools with an interactive dashboard -- scan a repo, generate an audit-support packet, get a prioritized fix plan, and create tracked work items (GitHub Issues or Jira). Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps findings to 20 SOC2 Trust Services controls, and provides remediation ROI estimates.
+SOC2-lite scanning in 9 tools with an interactive dashboard -- scan a repo, generate an audit-support packet, get a prioritized fix plan, and create tracked work items (GitHub Issues or Jira). Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps findings to 20 SOC2 Trust Services controls, and provides remediation ROI estimates.
 
 > **Important**: This tool assists with compliance workflows but does not replace a SOC2 audit. Scanner findings indicate potential control gaps -- they do not prove controls are implemented. Coverage percentages reflect scanner reach, not auditor-verified compliance status. ROI estimates use configurable industry-informed defaults, not measured data. All outputs should be reviewed by qualified personnel before use in formal compliance processes.
 
@@ -175,6 +175,25 @@ compliance.scan_repo({ repoPath: "/tmp/demo-repo" })
 
 Generates fake AWS keys (gitleaks), vulnerable npm deps (npm audit), insecure Terraform + Dockerfile (checkov). All secrets are clearly marked TEST ONLY.
 
+#### ZIP Export
+
+Export an audit packet as a portable ZIP archive with SHA-256 integrity verification:
+
+```jsonc
+// Export the latest audit packet as a ZIP
+{"method":"tools/call","params":{"name":"compliance.export_audit_packet","arguments":{
+  "repoPath":"/path/to/repo"
+}}}
+// Response: { zipPath, bytes, sha256, runId, includesEvidence }
+
+// Export without raw scanner evidence (smaller file)
+{"method":"tools/call","params":{"name":"compliance.export_audit_packet","arguments":{
+  "repoPath":"/path/to/repo", "includeEvidence": false
+}}}
+```
+
+The ZIP is written to `.compliance/exports/<runId>/audit_packet.zip` and its SHA-256 hash is recorded in the audit chain. Suitable for CI artifact upload, email delivery, or archive.
+
 #### Security Model
 
 These invariants hold for every scan:
@@ -202,6 +221,8 @@ These invariants hold for every scan:
       roi.json                # ROI estimate
       manifest.json           # Deterministic export metadata + security policy
       evidence/               # Copies of raw outputs
+  exports/<runId>/
+    audit_packet.zip          # Portable ZIP archive (SHA-256 recorded in audit chain)
   approvals/
     pending/<planId>.json     # Dry-run ticket plans awaiting approval
     approved/<planId>.json    # Approved plans (hash-verified at execution time)
@@ -272,7 +293,7 @@ claude-desktop-mcp-bridge/
 │   ├── shell-bridge/         # Shell command MCP server
 │   ├── skills-bridge/        # Skills library MCP server
 │   ├── compliance-bridge/    # SOC2 audit engine (gitleaks + npm audit + checkov)
-│   │   ├── server.ts         # MCP server with 8 tools
+│   │   ├── server.ts         # MCP server with 9 tools
 │   │   ├── contracts.ts      # All TypeScript types
 │   │   ├── schemas.ts        # Zod validation schemas
 │   │   ├── ticket-writer.ts  # GitHub Issues integration (dry-run/approve/execute)

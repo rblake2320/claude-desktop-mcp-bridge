@@ -294,6 +294,25 @@ export interface ApproveTicketPlanResponse {
 
 // ── Audit Events ─────────────────────────────────────────────────
 
+// ── ZIP Export ────────────────────────────────────────────────────
+
+export interface ExportAuditPacketRequest {
+  repoPath: string;
+  runId?: string;
+  format: 'zip';
+  includeEvidence?: boolean;
+}
+
+export interface ExportAuditPacketResponse {
+  zipPath: string;
+  bytes: number;
+  sha256: string;
+  runId: string;
+  includesEvidence: boolean;
+}
+
+// ── Audit Events ─────────────────────────────────────────────────
+
 export interface AuditEvent {
   ts: string;
   kind: 'tool_start' | 'tool_end' | 'approval_requested' | 'approval_granted' | 'command_run' | 'file_written';

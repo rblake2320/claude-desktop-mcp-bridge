@@ -1,7 +1,7 @@
 ﻿/**
  * Compliance Navigator - MCP Server
  *
- * Standalone MCP server with 8 tools + MCP resource handlers:
+ * Standalone MCP server with 9 tools + MCP resource handlers:
  *   1. compliance.scan_repo              - Run gitleaks + npm audit + checkov, normalize, map SOC2, compute ROI
  *   2. compliance.generate_audit_packet  - Write structured audit-support directory
  *   3. compliance.plan_remediation       - Prioritized remediation plan
@@ -10,6 +10,7 @@
  *   6. compliance.verify_audit_chain     - Verify hash chain integrity of audit log
  *   7. compliance.open_dashboard         - Open interactive compliance dashboard (returns resource URI)
  *   8. compliance.create_demo_fixture    - Generate a demo repo with intentional findings for all 3 scanners
+ *   9. compliance.export_audit_packet    - ZIP export of audit packet with SHA-256 integrity hash
  *
  * Resources:
  *   - compliance://dashboard              - Interactive HTML dashboard (MCP App)
@@ -33,9 +34,10 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { platform, homedir } from 'node:os';
 
-import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema, VerifyAuditChainSchema, OpenDashboardSchema, CreateDemoFixtureSchema } from './schemas.js';
+import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema, VerifyAuditChainSchema, OpenDashboardSchema, CreateDemoFixtureSchema, ExportAuditPacketSchema } from './schemas.js';
 import { generateDashboardHtml } from './dashboard.js';
 import { createDemoFixture, type CreateDemoFixtureResponse } from './demo-fixture.js';
+import { exportAuditPacket, type ExportAuditPacketResponse } from './zip-export.js';
 import { getToolRisk } from './policy.js';
 import { assertAllowedCommand, COMPLIANCE_COMMAND_ALLOWLIST } from '../shared/command-allowlist.js';
 import { assertCompliancePath, validateRepoPath } from '../shared/path-policy.js';
@@ -65,7 +67,7 @@ import type {
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SERVER_NAME = 'compliance-navigator';
-const SERVER_VERSION = '0.6.0';
+const SERVER_VERSION = '0.7.0';
 const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -365,6 +367,20 @@ const tools: Tool[] = [
         preset: { type: 'string', enum: ['soc2-demo'], default: 'soc2-demo', description: 'Fixture preset' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'compliance.export_audit_packet',
+    description: 'Export an audit packet as a portable ZIP archive with SHA-256 integrity hash. Bundles the audit_packet/ directory (and optionally raw scanner evidence) into a single file suitable for sharing, CI artifacts, or archive. Writes to .compliance/exports/<runId>/audit_packet.zip.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repoPath: { type: 'string', description: 'Absolute path to the repository' },
+        runId: { type: 'string', description: 'Run ID from a previous scan (defaults to most recent)' },
+        format: { type: 'string', enum: ['zip'], default: 'zip', description: 'Export format' },
+        includeEvidence: { type: 'boolean', default: true, description: 'Include raw scanner output in the ZIP (default true)' },
+      },
+      required: ['repoPath'],
     },
   },
 ];
@@ -766,6 +782,10 @@ async function handleGenerateAuditPacket(args: unknown): Promise<GenerateAuditPa
   const input = GenerateAuditPacketSchema.parse(args);
   const { repoPath, runId: requestedRunId, outputDir } = input;
 
+  const pathCheck = validateRepoPath(repoPath);
+  if (!pathCheck.valid) {
+    throw new Error(`Invalid repository path: ${pathCheck.reason}`);
+  }
   if (!existsSync(repoPath)) {
     throw new Error(`Repository path does not exist: ${repoPath}`);
   }
@@ -801,6 +821,10 @@ async function handlePlanRemediation(args: unknown): Promise<PlanRemediationResp
   const input = PlanRemediationSchema.parse(args);
   const { repoPath, runId: requestedRunId, maxItems } = input;
 
+  const pathCheck = validateRepoPath(repoPath);
+  if (!pathCheck.valid) {
+    throw new Error(`Invalid repository path: ${pathCheck.reason}`);
+  }
   if (!existsSync(repoPath)) {
     throw new Error(`Repository path does not exist: ${repoPath}`);
   }
@@ -903,6 +927,10 @@ async function handleCreateTicketsTool(args: unknown): Promise<CreateTicketsResp
   const input = CreateTicketsSchema.parse(args);
   const { repoPath, runId: requestedRunId, maxItems, target, targetRepo, dryRun, approvedPlanId, reopenClosed, labelPolicy } = input;
 
+  const pathCheck = validateRepoPath(repoPath);
+  if (!pathCheck.valid) {
+    throw new Error(`Invalid repository path: ${pathCheck.reason}`);
+  }
   if (!existsSync(repoPath)) {
     throw new Error(`Repository path does not exist: ${repoPath}`);
   }
@@ -941,6 +969,10 @@ async function handleApproveTicketPlanTool(args: unknown): Promise<ApproveTicket
   const input = ApproveTicketPlanSchema.parse(args);
   const { repoPath, planId, approvedBy, reason } = input;
 
+  const pathCheck = validateRepoPath(repoPath);
+  if (!pathCheck.valid) {
+    throw new Error(`Invalid repository path: ${pathCheck.reason}`);
+  }
   if (!existsSync(repoPath)) {
     throw new Error(`Repository path does not exist: ${repoPath}`);
   }
@@ -996,7 +1028,50 @@ function handleCreateDemoFixture(args: unknown): CreateDemoFixtureResponse {
   return result;
 }
 
-// â”€â”€ Dashboard Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Export Handler â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+
+async function handleExportAuditPacket(args: unknown): Promise<ExportAuditPacketResponse> {
+  const input = ExportAuditPacketSchema.parse(args);
+  const { repoPath, runId: requestedRunId, includeEvidence } = input;
+
+  // Validate repo path
+  const pathCheck = validateRepoPath(repoPath);
+  if (!pathCheck.valid) {
+    throw new Error(`Invalid repository path: ${pathCheck.reason}`);
+  }
+  if (!existsSync(repoPath)) {
+    throw new Error(`Repository path does not exist: ${repoPath}`);
+  }
+
+  const runId = requestedRunId ?? getLatestRunId(repoPath);
+  if (!runId) {
+    throw new Error('No scan runs found. Run compliance.scan_repo first.');
+  }
+
+  auditChain.append('tool_start', 'compliance.export_audit_packet', {
+    runId, repoPath, includeEvidence,
+  });
+
+  const result = await exportAuditPacket(repoPath, runId, includeEvidence);
+
+  auditChain.append('file_written', 'compliance.export_audit_packet', {
+    runId,
+    zipPath: result.zipPath,
+    bytes: result.bytes,
+    sha256: result.sha256,
+  });
+
+  auditChain.append('tool_end', 'compliance.export_audit_packet', {
+    runId,
+    zipPath: result.zipPath,
+    bytes: result.bytes,
+    sha256: result.sha256,
+  });
+
+  return result;
+}
+
+// â"€â"€ Dashboard Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface OpenDashboardResponse {
   resourceUri: string;
@@ -1009,6 +1084,10 @@ function handleOpenDashboard(args: unknown): OpenDashboardResponse {
   const input = OpenDashboardSchema.parse(args);
   const { repoPath, runId: requestedRunId } = input;
 
+  const pathCheck = validateRepoPath(repoPath);
+  if (!pathCheck.valid) {
+    throw new Error(`Invalid repository path: ${pathCheck.reason}`);
+  }
   if (!existsSync(repoPath)) {
     throw new Error(`Repository path does not exist: ${repoPath}`);
   }
@@ -1126,6 +1205,9 @@ export function createComplianceServer() {
           break;
         case 'compliance.create_demo_fixture':
           result = handleCreateDemoFixture(args);
+          break;
+        case 'compliance.export_audit_packet':
+          result = await handleExportAuditPacket(args);
           break;
         default:
           throw new Error(`Unknown tool: ${name}`);

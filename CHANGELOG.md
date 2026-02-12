@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-12
+
+### Added
+- **ZIP Export**: `compliance.export_audit_packet` tool creates a portable ZIP archive of the audit packet with SHA-256 integrity hash
+- Bundles audit_packet/ directory (and optionally raw scanner evidence) into a single file
+- Writes to `.compliance/exports/<runId>/audit_packet.zip`
+- SHA-256 of the ZIP recorded in audit chain as `file_written` event
+- Suitable for CI artifact upload, email delivery, or archive
+
+### Changed
+- Compliance Navigator now exposes 9 tools (was 8) plus MCP resource handlers
+- Added `archiver` dependency for ZIP creation
+
 ## [0.6.0] - 2026-02-12
 
 ### Added
@@ -84,6 +97,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 - Shell bridge (run command, background processes, navigation)
 - Basic MCP server architecture
 
+[0.7.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.3.0...v0.4.0

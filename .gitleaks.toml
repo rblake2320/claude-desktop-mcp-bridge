@@ -1,0 +1,11 @@
+# Gitleaks configuration for compliance-bridge
+# Excludes build artifacts and dependencies from secret scanning
+
+title = "compliance-bridge gitleaks config"
+
+[allowlist]
+  paths = [
+    '''dist/''',
+    '''node_modules/''',
+    '''.compliance/''',
+  ]

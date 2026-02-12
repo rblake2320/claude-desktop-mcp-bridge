@@ -1,9 +1,10 @@
 /**
- * Tamper-Evident Audit Chain
+ * Hash-Chained Audit Log
  *
  * Append-only JSONL log with SHA256 hash chain.
  * Each entry includes the hash of the previous entry,
- * creating a tamper-evident chain of events.
+ * creating a hash-linked chain where modifications are detectable
+ * by recomputing hashes from the first entry.
  */
 
 import { createHash } from 'node:crypto';

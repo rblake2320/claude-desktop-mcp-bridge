@@ -63,7 +63,8 @@ export interface SOC2Control {
   scannerMappings: Array<{
     scanner: ScannerId;
     rulePatterns?: RegExp[];      // optional fine-grained matching
-    confidence: number;           // 0..1
+    /** Heuristic relevance score (0..1). NOT empirically validated. See soc2-map.ts for methodology. */
+    confidence: number;
   }>;
 }
 
@@ -75,20 +76,26 @@ export interface SOC2Mapping {
 }
 
 // ── Coverage ─────────────────────────────────────────────────────
+//
+// IMPORTANT: "Coverage" here means "scanner reach" -- the percentage of SOC2
+// controls that at least one scanner produced findings for. It does NOT mean
+// compliance status. A control marked "covered" means a scanner reported
+// findings relevant to it, not that the control passes an audit.
 
 export interface CoverageResult {
   coveredControls: string[];
   missingControls: string[];
-  /** Observed coverage: controls with actual findings */
+  /** Scanner reach: controls where at least one finding was detected (NOT compliance status) */
   coveragePct: number;            // 0..100
-  /** Potential coverage: controls addressable by installed scanners (even with 0 findings) */
+  /** Potential reach: controls addressable by installed scanners (even with 0 findings) */
   coveragePctPotential: number;   // 0..100
-  /** Full coverage: controls addressable when all scanners are installed */
+  /** Full reach: controls addressable when all 3 scanners are installed */
   coveragePctFull: number;        // 0..100
   coveredControlsPotential: string[];
   controlDetails: Array<{
     controlId: string;
     controlName: string;
+    /** 'covered' = scanner produced findings for this control (not compliance status) */
     status: 'covered' | 'gap';
     findingCount: number;
   }>;
@@ -128,11 +135,15 @@ export interface AuditManifest {
 }
 
 // ── ROI ──────────────────────────────────────────────────────────
+//
+// ROI estimates use configurable defaults, NOT validated measurements.
+// See roi.ts for full methodology documentation and real-world ranges.
 
 export interface ROIResult {
   hoursSaved: number;
   hoursSavedConservative: number;
   hoursSavedLikely: number;
+  /** Always contains a disclaimer about the estimation basis */
   basis: string;
   breakdown: Record<ScannerId, {
     count: number;

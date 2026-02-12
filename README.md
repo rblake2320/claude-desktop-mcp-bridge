@@ -62,9 +62,11 @@ Exposes Claude Code's **entire 22-skill library**:
 
 ### 4. `compliance-bridge` (Compliance Navigator)
 
-**Compliance Navigator turns MCP from tool plumbing into an evidence-grade enterprise workflow engine.**
+**Compliance Navigator turns MCP from tool plumbing into a structured compliance workflow engine.**
 
-SOC2-lite audit in 3 tools -- scan a repo, generate an auditor-ready packet, get a prioritized fix plan. Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps all findings to 20 SOC2 Trust Services controls, and estimates remediation ROI.
+SOC2-lite scanning in 5 tools -- scan a repo, generate an audit-support packet, get a prioritized fix plan, and create tracked work items (GitHub Issues or Jira). Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps findings to 20 SOC2 Trust Services controls, and provides remediation ROI estimates.
+
+> **Important**: This tool assists with compliance workflows but does not replace a SOC2 audit. Scanner findings indicate potential control gaps -- they do not prove controls are implemented. Coverage percentages reflect scanner reach, not auditor-verified compliance status. ROI estimates use configurable industry-informed defaults, not measured data. All outputs should be reviewed by qualified personnel before use in formal compliance processes.
 
 #### Quickstart
 
@@ -99,7 +101,7 @@ Then ask Claude: *"Run a compliance scan on this repo"* -- or call the tools dir
 {"method":"tools/call","params":{"name":"compliance.plan_remediation","arguments":{"repoPath":"/path/to/repo"}}}
 ```
 
-**Typical output:** 42 findings across 3 scanners, 100% SOC2 control coverage, 19-34 hours estimated remediation ROI.
+**Example output** (against the included demo-repo with intentional vulnerabilities): findings array with severity/scanner/SOC2 mappings, control coverage percentages, and ROI estimates. Real-world results depend on your codebase and which scanners are installed.
 
 #### Closed-Loop Ticket Creation
 
@@ -112,7 +114,7 @@ Turn findings into tracked work items with a secure dry-run / approve / execute 
 }}}
 // Response: planId, wouldCreate[], skippedAsDuplicate[]
 
-// Step 2: Approve the plan (file-based, tamper-evident)
+// Step 2: Approve the plan (file-based, hash-verified)
 {"method":"tools/call","params":{"name":"compliance.approve_ticket_plan","arguments":{
   "repoPath":"/path/to/repo", "planId":"<planId>", "approvedBy":"security-lead"
 }}}
@@ -129,13 +131,13 @@ Turn findings into tracked work items with a secure dry-run / approve / execute 
 scan_repo → generate_audit_packet → create_tickets(dryRun=true) → approve → create_tickets(dryRun=false)
 ```
 
-**Enterprise features:**
+**Safety and control features:**
 - **Deduplication**: `CN-FINDING-ID` markers in issue body prevent duplicate issues across runs
 - **Approval gate**: SHA-256 hash-bound plans with repo identity baked in (prevents cross-repo replay)
 - **reopenClosed**: Optionally reopen closed duplicate issues instead of skipping
 - **labelPolicy**: `require-existing` (safe default) only uses labels that already exist; `create-if-missing` auto-creates them
-- **Rate limiting**: Automatic backoff on GitHub API 403/429 responses with `X-RateLimit-Remaining` monitoring
-- **Audit trail**: Every dry-run, approval, and execution logged to the tamper-evident hash chain
+- **Rate limiting**: Automatic backoff on GitHub/Jira API 403/429 responses with `X-RateLimit-Remaining` monitoring
+- **Audit trail**: Every dry-run, approval, and execution logged to the hash-chained audit log
 
 #### Security Model
 
@@ -280,7 +282,7 @@ claude-desktop-mcp-bridge/
 
 ## 🏪 Skill Marketplace Ready
 
-This bridge includes production-ready **dynamic skill loading infrastructure** designed for security-first skill marketplaces and enterprise deployment.
+This bridge includes **dynamic skill loading infrastructure** designed for security-first skill marketplaces.
 
 ### Trust Levels & Security Model
 

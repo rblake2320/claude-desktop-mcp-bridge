@@ -1,18 +1,36 @@
 /**
- * Compliance Navigator - ROI Calculator
+ * Compliance Navigator - ROI Estimator
  *
- * Conservative model for estimating hours saved by automated compliance scanning.
- * Based on fixed triage+remediation times per finding class.
+ * Provides rough estimates of manual remediation effort per finding class.
+ *
+ * IMPORTANT: These are configurable defaults, NOT validated measurements.
+ * The constants below are informed guesses based on typical DevSecOps
+ * workflows but have not been validated against real-world remediation
+ * time tracking data. Users should adjust these constants based on their
+ * own team's measured remediation times.
+ *
+ * Use these estimates for prioritization and rough planning only.
+ * Do not cite them as measured or validated metrics.
  */
 
 import type { NormalizedFinding, ScannerId, ROIResult } from './contracts.js';
 
-// ── Conservative Defaults ────────────────────────────────────────
-// Each constant represents average human-hours per finding to triage + remediate.
+// ── Default Estimates (NOT VALIDATED -- adjust for your team) ────
+//
+// Each constant is an estimated average human-hours per finding to triage + remediate.
+// These are rough defaults, not empirical measurements.
+//
+// Sources of informed guesswork:
+//   - Secret rotation (0.75h): assumes triage, credential rotation, PR, verification.
+//     Real-world range: 0.25h (simple API key) to 4h+ (database credential with dependencies).
+//   - Dependency vuln (0.25h): assumes npm update, test, verify.
+//     Real-world range: 0.1h (minor bump) to 8h+ (major version with breaking changes).
+//   - IaC misconfig (0.5h): assumes config fix, plan, apply.
+//     Real-world range: 0.15h (add a tag) to 4h+ (network architecture change).
 
-const HOURS_PER_SECRET = 0.75;     // triage + rotation + PR + verification
-const HOURS_PER_VULN = 0.25;       // review + update + test
-const HOURS_PER_IAC = 0.5;         // fix + deploy + validate
+const HOURS_PER_SECRET = 0.75;
+const HOURS_PER_VULN = 0.25;
+const HOURS_PER_IAC = 0.5;
 
 const SCANNER_HOURS: Record<ScannerId, number> = {
   gitleaks: HOURS_PER_SECRET,
@@ -20,12 +38,14 @@ const SCANNER_HOURS: Record<ScannerId, number> = {
   checkov: HOURS_PER_IAC,
 };
 
-// Conservative multiplier: bare minimum (just triage + fix)
 const CONSERVATIVE_MULTIPLIER = 1.0;
-// Likely multiplier: includes context switching, PR review, deployment verification
 const LIKELY_MULTIPLIER = 1.8;
 
-const BASIS = 'Conservative: triage+remediation only. Likely: includes context switching, code review, and deployment verification.';
+const BASIS =
+  'ESTIMATE ONLY (not validated against real data). ' +
+  'Conservative: triage+remediation using default per-finding estimates. ' +
+  'Likely: 1.8x multiplier for context switching, code review, and deployment. ' +
+  'Adjust HOURS_PER_SECRET/VULN/IAC constants for your team\'s actual remediation times.';
 
 /**
  * Calculate estimated ROI in hours saved.

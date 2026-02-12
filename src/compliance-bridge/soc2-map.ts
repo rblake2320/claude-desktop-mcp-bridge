@@ -3,6 +3,29 @@
  *
  * Maps scanner findings to 20 SOC2 Trust Services Criteria controls.
  * Computes coverage percentage against the target control set.
+ *
+ * IMPORTANT: Confidence scores and control mappings are HEURISTIC.
+ *
+ * How confidence scores were assigned:
+ *   - 0.8-0.9: Scanner directly detects the control's primary concern.
+ *     Example: gitleaks→CC6.1 (Logical Access) at 0.9 because leaked
+ *     credentials are a direct logical access control failure.
+ *   - 0.5-0.7: Scanner detects a related but indirect signal.
+ *     Example: checkov→CC6.3 (Role-Based Access) at 0.5 because IaC
+ *     misconfigs may indicate access role issues, but don't prove it.
+ *   - 0.4: Weakest mappings where the connection is plausible but tenuous.
+ *     Example: gitleaks→CC7.4 (Incident Response) at 0.4 -- a leaked
+ *     secret suggests incident response may be needed, but doesn't
+ *     test whether an incident response process exists.
+ *
+ * These scores were NOT derived from empirical data or validated against
+ * auditor assessments. They represent the author's judgment about how
+ * directly each scanner type relates to each control. Users should
+ * review and adjust these mappings for their specific compliance context.
+ *
+ * Scanner findings indicate POTENTIAL control gaps, not proven failures.
+ * A high confidence score means the scanner is relevant to the control,
+ * not that the control is definitively failed or passed.
  */
 
 import type { NormalizedFinding, ScannerId, SOC2Control, SOC2Mapping, CoverageResult, ScannerStatus } from './contracts.js';
@@ -246,9 +269,15 @@ function getControlsForScanners(scannerIds: ScannerId[]): Set<string> {
  * Compute coverage against the 20-control SOC2-lite target set.
  *
  * Returns three coverage metrics:
- *   - coveragePct: observed (controls with actual findings)
- *   - coveragePctPotential: controls addressable by installed scanners
- *   - coveragePctFull: controls addressable when ALL scanners are installed
+ *   - coveragePct: "scanner reach" -- controls where at least one finding was detected.
+ *     This does NOT mean the control is implemented or compliant. It means
+ *     a scanner produced findings relevant to the control.
+ *   - coveragePctPotential: controls addressable by installed scanners (even with 0 findings).
+ *   - coveragePctFull: controls addressable when ALL 3 scanners are installed.
+ *
+ * IMPORTANT: These metrics measure scanner reach, not compliance status.
+ * A "covered" control means "a scanner looked at something relevant to this control
+ * and found items to report." It does NOT mean the control passes audit.
  */
 export function computeCoverage(
   mappings: SOC2Mapping[],

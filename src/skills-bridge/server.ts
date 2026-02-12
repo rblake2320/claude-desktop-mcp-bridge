@@ -819,7 +819,7 @@ const SKILL_DEFINITIONS: LegacySkillDefinition[] = [
   },
   {
     name: 'compliance-navigator',
-    description: 'Enterprise compliance scanning: runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) against repositories. Maps findings to SOC2 controls, generates evidence-grade audit packets, and estimates ROI. Separate MCP server at compliance-bridge.',
+    description: 'Compliance scanning: runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) against repositories. Maps findings to SOC2 controls, generates structured audit-support packets, and provides ROI estimates. Separate MCP server at compliance-bridge.',
     category: 'elite',
     triggers: ['compliance', 'soc2', 'audit', 'security scan', 'gitleaks', 'checkov', 'npm audit', 'secrets scan', 'vulnerability scan', 'iac scan', 'audit packet', 'compliance report'],
     capabilities: [

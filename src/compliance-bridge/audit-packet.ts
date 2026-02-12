@@ -1,7 +1,7 @@
 /**
  * Audit Packet Generator
  *
- * Produces an evidence-grade audit directory containing:
+ * Produces a structured audit-support directory containing:
  *   audit_packet/
  *     index.md          -- Executive summary
  *     findings.json     -- Normalized findings array
@@ -68,11 +68,11 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   lines.push(`| Low | ${scan.countsBySeverity.low ?? 0} |`);
   const totalControls = scan.controlCoverage.coveredControls.length + scan.controlCoverage.missingControls.length;
   const potentialControls = scan.controlCoverage.coveredControlsPotential?.length ?? 0;
-  lines.push(`| SOC2 Coverage (observed) | ${scan.controlCoverage.coveragePct}% (${scan.controlCoverage.coveredControls.length}/${totalControls}) |`);
-  lines.push(`| SOC2 Coverage (potential) | ${scan.controlCoverage.coveragePctPotential ?? 0}% (${potentialControls}/${totalControls}) |`);
-  lines.push(`| SOC2 Coverage (full pack) | ${scan.controlCoverage.coveragePctFull ?? 100}% |`);
-  lines.push(`| Hours Saved (conservative) | ${scan.roiEstimate.hoursSavedConservative} |`);
-  lines.push(`| Hours Saved (likely) | ${scan.roiEstimate.hoursSavedLikely} |`);
+  lines.push(`| SOC2 Scanner Reach (observed) | ${scan.controlCoverage.coveragePct}% (${scan.controlCoverage.coveredControls.length}/${totalControls}) |`);
+  lines.push(`| SOC2 Scanner Reach (potential) | ${scan.controlCoverage.coveragePctPotential ?? 0}% (${potentialControls}/${totalControls}) |`);
+  lines.push(`| SOC2 Scanner Reach (full pack) | ${scan.controlCoverage.coveragePctFull ?? 100}% |`);
+  lines.push(`| Est. Hours Saved (conservative) | ${scan.roiEstimate.hoursSavedConservative} |`);
+  lines.push(`| Est. Hours Saved (likely) | ${scan.roiEstimate.hoursSavedLikely} |`);
   lines.push('');
 
   // Top 3 Risk Themes
@@ -117,7 +117,9 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   }
 
   // SOC2 Control Coverage
-  lines.push('## SOC2 Control Coverage');
+  lines.push('## SOC2 Control Scanner Reach');
+  lines.push('');
+  lines.push('> **Note**: "Covered" means a scanner produced findings relevant to this control. It does **not** mean the control passes audit or is implemented. See Scope Limitations below.');
   lines.push('');
   lines.push(`| Control | Name | Status | Findings |`);
   lines.push(`|---------|------|--------|----------|`);
@@ -180,7 +182,7 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   lines.push('');
 
   // ROI
-  lines.push('## ROI Estimate');
+  lines.push('## ROI Estimate (Not Validated)');
   lines.push('');
   lines.push(`| Estimate | Hours Saved |`);
   lines.push(`|----------|-------------|`);

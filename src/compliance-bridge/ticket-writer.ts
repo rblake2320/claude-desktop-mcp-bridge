@@ -3,8 +3,8 @@
  *
  * Creates GitHub Issues or Jira tickets from compliance scan findings with:
  *   - Deterministic deduplication (CN-FINDING-ID markers)
- *   - Approval gate (file-based, tamper-evident)
- *   - Enterprise-grade ticket formatting
+ *   - Approval gate (file-based, hash-verified)
+ *   - Structured ticket formatting
  *   - Rate limiting + backoff for API calls
  *   - Label policy (require-existing vs create-if-missing)
  *   - Repo/project targeting defense (identity in plan hash)

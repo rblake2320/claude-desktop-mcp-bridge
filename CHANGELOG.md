@@ -16,7 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 - Rate limiting with `X-RateLimit-Remaining` monitoring and 403/429 automatic backoff
 - Batch pacing (2 concurrent issues, 500ms delay between batches)
 - Approval artifacts stored in `<repo>/.compliance/approvals/{pending,approved}/`
-- All ticket operations logged to tamper-evident audit chain
+- All ticket operations logged to hash-chained audit log
 - CI smoke test (GitHub Actions: build + tools/list assertion)
 
 ### Changed
@@ -31,11 +31,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 - 3 MCP tools: `compliance.scan_repo`, `compliance.generate_audit_packet`, `compliance.plan_remediation`
 - Scanner integration: gitleaks (secrets), npm audit (dependencies), checkov (IaC)
 - Normalizers for all 3 scanner output formats
-- 20 SOC2 Trust Services control mappings with confidence scores
-- Coverage metrics: observed, potential (installed scanners), and full (all scanners)
-- ROI estimation model with conservative/likely ranges
-- Evidence-grade audit packet: index.md, findings.json, coverage.json, roi.json, manifest.json
-- Tamper-evident audit chain (SHA-256 hash-chained JSONL)
+- 20 SOC2 Trust Services control mappings with heuristic confidence scores (not auditor-validated)
+- Scanner-reach metrics: observed, potential (installed scanners), and full (all scanners)
+- ROI estimation model with configurable defaults (not validated against real remediation data)
+- Structured audit-support packet: index.md, findings.json, coverage.json, roi.json, manifest.json
+- Hash-chained audit log (SHA-256 JSONL)
 - Command allowlist: only 6 regex patterns permitted (gitleaks, npm audit, checkov + version probes)
 - Path policy: all writes pinned to `<repo>/.compliance/`
 - Self-documenting manifest with security execution policy

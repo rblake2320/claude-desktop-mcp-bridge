@@ -3,7 +3,7 @@
  *
  * Standalone MCP server with 3 tools:
  *   1. compliance.scan_repo       - Run gitleaks + npm audit + checkov, normalize, map SOC2, compute ROI
- *   2. compliance.generate_audit_packet - Write evidence-grade audit directory
+ *   2. compliance.generate_audit_packet - Write structured audit-support directory
  *   3. compliance.plan_remediation      - Prioritized remediation plan
  *
  * Transport: StdioServerTransport (JSON-RPC over stdin/stdout)
@@ -58,7 +58,9 @@ const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 
-// Effort estimates in minutes per finding severity
+// Effort estimates in minutes per finding severity.
+// These are rough defaults for prioritization, NOT validated measurements.
+// Adjust for your team's actual remediation times.
 const EFFORT_MINUTES: Record<Severity, number> = {
   critical: 120,
   high: 60,
@@ -261,7 +263,7 @@ const tools: Tool[] = [
   },
   {
     name: 'compliance.generate_audit_packet',
-    description: 'Generate an evidence-grade audit packet directory with index.md, findings.json, coverage.json, roi.json, and raw scanner evidence.',
+    description: 'Generate a structured audit-support packet directory with index.md, findings.json, coverage.json, roi.json, and raw scanner output.',
     inputSchema: {
       type: 'object' as const,
       properties: {

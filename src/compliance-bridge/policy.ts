@@ -10,6 +10,8 @@ export const TOOL_RISK: Record<string, RiskTier> = {
   'compliance.scan_repo': 'medium',
   'compliance.generate_audit_packet': 'medium',
   'compliance.plan_remediation': 'low',
+  'compliance.create_tickets': 'high',
+  'compliance.approve_ticket_plan': 'high',
 };
 
 /**

@@ -23,7 +23,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { platform, homedir } from 'node:os';
 
-import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema } from './schemas.js';
+import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema } from './schemas.js';
 import { getToolRisk } from './policy.js';
 import { assertAllowedCommand, COMPLIANCE_COMMAND_ALLOWLIST } from '../shared/command-allowlist.js';
 import { assertCompliancePath, validateRepoPath } from '../shared/path-policy.js';
@@ -34,6 +34,7 @@ import { normalizeCheckov } from './normalizers/checkov.js';
 import { mapFindingsToControls, computeCoverage, annotateFindingsWithControls } from './soc2-map.js';
 import { calculateROI } from './roi.js';
 import { generateAuditPacket } from './audit-packet.js';
+import { handleCreateTickets, handleApproveTicketPlan } from './ticket-writer.js';
 import type {
   NormalizedFinding,
   ScanRepoResponse,
@@ -45,6 +46,8 @@ import type {
   ToolRunTranscript,
   ScannerStatus,
   AuditManifest,
+  CreateTicketsResponse,
+  ApproveTicketPlanResponse,
 } from './contracts.js';
 
 // ── Constants ────────────────────────────────────────────────────
@@ -280,6 +283,36 @@ const tools: Tool[] = [
         maxItems: { type: 'number', default: 20, description: 'Maximum remediation items to include' },
       },
       required: ['repoPath'],
+    },
+  },
+  {
+    name: 'compliance.create_tickets',
+    description: 'Create GitHub Issues from scan findings. Always generates a preview plan first (dryRun=true). To execute, approve the plan first with compliance.approve_ticket_plan, then call again with approvedPlanId and dryRun=false.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repoPath: { type: 'string', description: 'Absolute path to the repository' },
+        runId: { type: 'string', description: 'Run ID from a previous scan (defaults to most recent)' },
+        maxItems: { type: 'number', default: 10, description: 'Maximum tickets to create (default 10)' },
+        target: { type: 'string', enum: ['github', 'jira'], default: 'github', description: 'Ticket system target' },
+        dryRun: { type: 'boolean', default: true, description: 'Preview plan without creating tickets (default true)' },
+        approvedPlanId: { type: 'string', description: 'Plan ID from a previously approved dry-run (required for execution)' },
+      },
+      required: ['repoPath'],
+    },
+  },
+  {
+    name: 'compliance.approve_ticket_plan',
+    description: 'Approve a pending ticket creation plan. Required before executing compliance.create_tickets with dryRun=false.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repoPath: { type: 'string', description: 'Absolute path to the repository' },
+        planId: { type: 'string', description: 'Plan ID from the dry-run response' },
+        approvedBy: { type: 'string', description: 'Name or identifier of the person approving' },
+        reason: { type: 'string', description: 'Optional reason for approval' },
+      },
+      required: ['repoPath', 'planId', 'approvedBy'],
     },
   },
 ];
@@ -812,6 +845,67 @@ async function handlePlanRemediation(args: unknown): Promise<PlanRemediationResp
   return response;
 }
 
+// ── Ticket Handlers ──────────────────────────────────────────────
+
+async function handleCreateTicketsTool(args: unknown): Promise<CreateTicketsResponse> {
+  const input = CreateTicketsSchema.parse(args);
+  const { repoPath, runId: requestedRunId, maxItems, target, dryRun, approvedPlanId } = input;
+
+  if (!existsSync(repoPath)) {
+    throw new Error(`Repository path does not exist: ${repoPath}`);
+  }
+
+  const runId = requestedRunId ?? getLatestRunId(repoPath);
+  if (!runId) {
+    throw new Error('No scan runs found. Run compliance.scan_repo first.');
+  }
+
+  const scanResult = loadScanResult(repoPath, runId);
+  if (!scanResult) {
+    throw new Error(`Scan result not found for runId: ${runId}`);
+  }
+
+  auditChain.append('tool_start', 'compliance.create_tickets', {
+    runId, repoPath, target, dryRun, approvedPlanId: approvedPlanId ?? null,
+  });
+
+  const result = await handleCreateTickets(
+    repoPath, scanResult, runId, maxItems, target, dryRun, approvedPlanId,
+  );
+
+  auditChain.append('tool_end', 'compliance.create_tickets', {
+    runId,
+    planId: result.planId,
+    dryRun: result.dryRun,
+    wouldCreate: result.summary.wouldCreate,
+    duplicates: result.summary.duplicates,
+    created: result.summary.created,
+  });
+
+  return result;
+}
+
+async function handleApproveTicketPlanTool(args: unknown): Promise<ApproveTicketPlanResponse> {
+  const input = ApproveTicketPlanSchema.parse(args);
+  const { repoPath, planId, approvedBy, reason } = input;
+
+  if (!existsSync(repoPath)) {
+    throw new Error(`Repository path does not exist: ${repoPath}`);
+  }
+
+  auditChain.append('approval_requested', 'compliance.approve_ticket_plan', {
+    planId, approvedBy,
+  });
+
+  const result = handleApproveTicketPlan(repoPath, planId, approvedBy, reason);
+
+  auditChain.append('approval_granted', 'compliance.approve_ticket_plan', {
+    planId, approvedBy, approvalPath: result.approvalPath,
+  });
+
+  return result;
+}
+
 // ── MCP Server ───────────────────────────────────────────────────
 
 export function createComplianceServer() {
@@ -840,6 +934,12 @@ export function createComplianceServer() {
           break;
         case 'compliance.plan_remediation':
           result = await handlePlanRemediation(args);
+          break;
+        case 'compliance.create_tickets':
+          result = await handleCreateTicketsTool(args);
+          break;
+        case 'compliance.approve_ticket_plan':
+          result = await handleApproveTicketPlanTool(args);
           break;
         default:
           throw new Error(`Unknown tool: ${name}`);

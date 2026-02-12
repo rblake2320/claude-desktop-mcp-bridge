@@ -37,6 +37,24 @@ export const PlanRemediationSchema = z.object({
   maxItems: z.number().min(1).max(100).default(20),
 });
 
+export const CreateTicketsSchema = z.object({
+  repoPath: safePath,
+  runId: z.string().optional(),
+  maxItems: z.number().min(1).max(100).default(10),
+  target: z.enum(['github', 'jira']).default('github'),
+  dryRun: z.boolean().default(true),
+  approvedPlanId: z.string().optional(),
+}).strict();
+
+export const ApproveTicketPlanSchema = z.object({
+  repoPath: safePath,
+  planId: z.string().min(6),
+  approvedBy: z.string().min(1),
+  reason: z.string().optional(),
+}).strict();
+
 export type ScanRepoInput = z.infer<typeof ScanRepoSchema>;
 export type GenerateAuditPacketInput = z.infer<typeof GenerateAuditPacketSchema>;
 export type PlanRemediationInput = z.infer<typeof PlanRemediationSchema>;
+export type CreateTicketsInput = z.infer<typeof CreateTicketsSchema>;
+export type ApproveTicketPlanInput = z.infer<typeof ApproveTicketPlanSchema>;

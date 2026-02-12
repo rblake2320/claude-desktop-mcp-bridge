@@ -220,6 +220,60 @@ export interface PlanRemediationResponse {
   totalEstimatedHours: number;
 }
 
+// ── Ticket Creation ──────────────────────────────────────────────
+
+export type TicketTarget = 'github' | 'jira';
+
+export interface TicketPlanItem {
+  findingId: string;
+  title: string;
+  body: string;
+  labels: string[];
+  dedupeQuery: string;
+}
+
+export interface CreateTicketsRequest {
+  repoPath: string;
+  runId?: string;
+  maxItems?: number;
+  target?: TicketTarget;
+  dryRun?: boolean;
+  approvedPlanId?: string;
+}
+
+export interface CreateTicketsResponse {
+  target: TicketTarget;
+  repo: { owner: string; name: string };
+  runId: string;
+
+  dryRun: boolean;
+  planId: string;
+
+  wouldCreate: TicketPlanItem[];
+  skippedAsDuplicate: { findingId: string; existingUrl: string }[];
+
+  created?: { findingId: string; url: string; number: number }[];
+  summary: {
+    requested: number;
+    wouldCreate: number;
+    duplicates: number;
+    created: number;
+  };
+}
+
+export interface ApproveTicketPlanRequest {
+  repoPath: string;
+  planId: string;
+  approvedBy: string;
+  reason?: string;
+}
+
+export interface ApproveTicketPlanResponse {
+  planId: string;
+  approvedAt: string;
+  approvalPath: string;
+}
+
 // ── Audit Events ─────────────────────────────────────────────────
 
 export interface AuditEvent {

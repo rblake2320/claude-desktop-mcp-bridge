@@ -1,10 +1,13 @@
 /**
  * Compliance Navigator - MCP Server
  *
- * Standalone MCP server with 3 tools:
- *   1. compliance.scan_repo       - Run gitleaks + npm audit + checkov, normalize, map SOC2, compute ROI
- *   2. compliance.generate_audit_packet - Write structured audit-support directory
- *   3. compliance.plan_remediation      - Prioritized remediation plan
+ * Standalone MCP server with 6 tools:
+ *   1. compliance.scan_repo              - Run gitleaks + npm audit + checkov, normalize, map SOC2, compute ROI
+ *   2. compliance.generate_audit_packet  - Write structured audit-support directory
+ *   3. compliance.plan_remediation       - Prioritized remediation plan
+ *   4. compliance.create_tickets         - Create GitHub Issues or Jira tickets from findings
+ *   5. compliance.approve_ticket_plan    - Approve a ticket creation plan
+ *   6. compliance.verify_audit_chain     - Verify hash chain integrity of audit log
  *
  * Transport: StdioServerTransport (JSON-RPC over stdin/stdout)
  * All diagnostic output goes to stderr.
@@ -23,11 +26,11 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { platform, homedir } from 'node:os';
 
-import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema } from './schemas.js';
+import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema, VerifyAuditChainSchema } from './schemas.js';
 import { getToolRisk } from './policy.js';
 import { assertAllowedCommand, COMPLIANCE_COMMAND_ALLOWLIST } from '../shared/command-allowlist.js';
 import { assertCompliancePath, validateRepoPath } from '../shared/path-policy.js';
-import { AuditChain } from '../shared/audit-chain.js';
+import { AuditChain, type VerifyResult } from '../shared/audit-chain.js';
 import { normalizeGitleaks } from './normalizers/gitleaks.js';
 import { normalizeNpmAudit } from './normalizers/npm-audit.js';
 import { normalizeCheckov } from './normalizers/checkov.js';
@@ -318,6 +321,17 @@ const tools: Tool[] = [
         reason: { type: 'string', description: 'Optional reason for approval' },
       },
       required: ['repoPath', 'planId', 'approvedBy'],
+    },
+  },
+  {
+    name: 'compliance.verify_audit_chain',
+    description: 'Verify integrity of the hash-chained audit log. Recomputes every SHA-256 hash from entry 1 and checks each link. Returns PASS/FAIL with the first broken line number if tampered.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        logPath: { type: 'string', description: 'Path to audit chain JSONL file (defaults to the server\'s active log)' },
+      },
+      required: [],
     },
   },
 ];
@@ -911,6 +925,21 @@ async function handleApproveTicketPlanTool(args: unknown): Promise<ApproveTicket
   return result;
 }
 
+// ── Verify Handler ───────────────────────────────────────────────
+
+function handleVerifyAuditChain(args: unknown): VerifyResult {
+  const input = VerifyAuditChainSchema.parse(args);
+
+  // If a custom logPath is provided, verify that chain instead
+  if (input.logPath) {
+    const customChain = new AuditChain(resolve(input.logPath));
+    return customChain.verify();
+  }
+
+  // Default: verify the server's active audit chain
+  return auditChain.verify();
+}
+
 // ── MCP Server ───────────────────────────────────────────────────
 
 export function createComplianceServer() {
@@ -945,6 +974,9 @@ export function createComplianceServer() {
           break;
         case 'compliance.approve_ticket_plan':
           result = await handleApproveTicketPlanTool(args);
+          break;
+        case 'compliance.verify_audit_chain':
+          result = handleVerifyAuditChain(args);
           break;
         default:
           throw new Error(`Unknown tool: ${name}`);

@@ -17,10 +17,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 - Batch pacing (2 concurrent issues, 500ms delay between batches)
 - Approval artifacts stored in `<repo>/.compliance/approvals/{pending,approved}/`
 - All ticket operations logged to hash-chained audit log
+- `compliance.verify_audit_chain` tool: recomputes every SHA-256 hash and checks chain integrity (PASS/FAIL + first broken line)
 - CI smoke test (GitHub Actions: build + tools/list assertion)
 
 ### Changed
-- Compliance Navigator now exposes 5 tools (was 3)
+- Compliance Navigator now exposes 6 tools (was 3)
 - README updated with closed-loop workflow documentation and enterprise feature list
 - Output structure diagram updated with `approvals/` directory
 

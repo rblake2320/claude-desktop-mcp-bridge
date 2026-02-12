@@ -59,8 +59,13 @@ export const ApproveTicketPlanSchema = z.object({
   reason: z.string().optional(),
 }).strict();
 
+export const VerifyAuditChainSchema = z.object({
+  logPath: z.string().optional(),
+}).strict();
+
 export type ScanRepoInput = z.infer<typeof ScanRepoSchema>;
 export type GenerateAuditPacketInput = z.infer<typeof GenerateAuditPacketSchema>;
 export type PlanRemediationInput = z.infer<typeof PlanRemediationSchema>;
 export type CreateTicketsInput = z.infer<typeof CreateTicketsSchema>;
 export type ApproveTicketPlanInput = z.infer<typeof ApproveTicketPlanSchema>;
+export type VerifyAuditChainInput = z.infer<typeof VerifyAuditChainSchema>;

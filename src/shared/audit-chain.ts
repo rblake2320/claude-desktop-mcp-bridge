@@ -93,45 +93,94 @@ export class AuditChain {
 
   /**
    * Verify the integrity of the entire audit chain.
-   * Returns { valid: true } if the chain is intact,
-   * or { valid: false, brokenAt: lineNumber } if tampered.
+   * Recomputes every hash from entry 1 and checks each link.
+   *
+   * Returns detailed verification result including:
+   *   - valid: whether all hashes check out
+   *   - totalEntries: number of entries in the chain
+   *   - firstEntry/lastEntry timestamps (for coverage range)
+   *   - brokenAt: 1-indexed line number of first failure (if any)
+   *   - brokenReason: human-readable description of what failed
    */
-  verify(): { valid: boolean; brokenAt?: number; totalEntries: number } {
+  verify(): VerifyResult {
     if (!existsSync(this.logPath)) {
-      return { valid: true, totalEntries: 0 };
+      return { valid: true, totalEntries: 0, logPath: this.logPath };
     }
 
     const content = readFileSync(this.logPath, 'utf-8').trim();
     if (!content) {
-      return { valid: true, totalEntries: 0 };
+      return { valid: true, totalEntries: 0, logPath: this.logPath };
     }
 
     const lines = content.split('\n');
     let expectedPrevHash = GENESIS_HASH;
+    let firstTs: string | undefined;
+    let lastTs: string | undefined;
 
     for (let i = 0; i < lines.length; i++) {
       let entry: AuditEntry;
       try {
         entry = JSON.parse(lines[i]);
       } catch {
-        return { valid: false, brokenAt: i + 1, totalEntries: lines.length };
+        return {
+          valid: false,
+          brokenAt: i + 1,
+          brokenReason: `Line ${i + 1}: invalid JSON`,
+          totalEntries: lines.length,
+          logPath: this.logPath,
+        };
       }
+
+      if (i === 0) firstTs = entry.ts;
+      lastTs = entry.ts;
 
       // Check prevHash links to previous entry
       if (entry.prevHash !== expectedPrevHash) {
-        return { valid: false, brokenAt: i + 1, totalEntries: lines.length };
+        return {
+          valid: false,
+          brokenAt: i + 1,
+          brokenReason: `Line ${i + 1}: prevHash mismatch (expected ${expectedPrevHash.slice(0, 12)}..., got ${entry.prevHash.slice(0, 12)}...)`,
+          totalEntries: lines.length,
+          logPath: this.logPath,
+          firstEntry: firstTs,
+          lastEntry: lastTs,
+        };
       }
 
       // Verify the hash of this entry
       const { hash: storedHash, ...payload } = entry;
       const computedHash = computeHash(payload);
       if (computedHash !== storedHash) {
-        return { valid: false, brokenAt: i + 1, totalEntries: lines.length };
+        return {
+          valid: false,
+          brokenAt: i + 1,
+          brokenReason: `Line ${i + 1}: hash mismatch (entry was modified after writing)`,
+          totalEntries: lines.length,
+          logPath: this.logPath,
+          firstEntry: firstTs,
+          lastEntry: lastTs,
+        };
       }
 
       expectedPrevHash = storedHash;
     }
 
-    return { valid: true, totalEntries: lines.length };
+    return {
+      valid: true,
+      totalEntries: lines.length,
+      logPath: this.logPath,
+      firstEntry: firstTs,
+      lastEntry: lastTs,
+    };
   }
+}
+
+export interface VerifyResult {
+  valid: boolean;
+  brokenAt?: number;
+  brokenReason?: string;
+  totalEntries: number;
+  logPath: string;
+  firstEntry?: string;
+  lastEntry?: string;
 }

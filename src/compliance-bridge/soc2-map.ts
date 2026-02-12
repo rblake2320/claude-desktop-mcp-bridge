@@ -29,6 +29,7 @@
  */
 
 import type { NormalizedFinding, ScannerId, SOC2Control, SOC2Mapping, CoverageResult, ScannerStatus } from './contracts.js';
+import { computeCoverageForControls } from './coverage-shared.js';
 
 // ── 20 SOC2-Lite Controls ────────────────────────────────────────
 
@@ -248,75 +249,18 @@ export function mapFindingsToControls(findings: NormalizedFinding[]): SOC2Mappin
 }
 
 /**
- * Compute which controls a set of scanners could potentially cover
- * (regardless of whether findings were produced).
- */
-function getControlsForScanners(scannerIds: ScannerId[]): Set<string> {
-  const controlIds = new Set<string>();
-  const scannerSet = new Set(scannerIds);
-  for (const control of SOC2_CONTROLS) {
-    for (const mapping of control.scannerMappings) {
-      if (scannerSet.has(mapping.scanner)) {
-        controlIds.add(control.id);
-        break;
-      }
-    }
-  }
-  return controlIds;
-}
-
-/**
  * Compute coverage against the 20-control SOC2-lite target set.
  *
- * Returns three coverage metrics:
- *   - coveragePct: "scanner reach" -- controls where at least one finding was detected.
- *     This does NOT mean the control is implemented or compliant. It means
- *     a scanner produced findings relevant to the control.
- *   - coveragePctPotential: controls addressable by installed scanners (even with 0 findings).
- *   - coveragePctFull: controls addressable when ALL 3 scanners are installed.
+ * Delegates to the shared coverage helper with SOC2_CONTROLS as the target set.
+ * See coverage-shared.ts for the generic implementation.
  *
  * IMPORTANT: These metrics measure scanner reach, not compliance status.
- * A "covered" control means "a scanner looked at something relevant to this control
- * and found items to report." It does NOT mean the control passes audit.
  */
 export function computeCoverage(
   mappings: SOC2Mapping[],
   scannerStatuses?: ScannerStatus[],
 ): CoverageResult {
-  const coveredIds = new Set(mappings.map(m => m.controlId));
-
-  // Potential: controls reachable by scanners that actually ran (status ok or skipped)
-  const activeScanners: ScannerId[] = scannerStatuses
-    ? scannerStatuses
-        .filter(s => s.status === 'ok' || s.status === 'skipped')
-        .map(s => s.scanner)
-    : [];
-  const potentialIds = getControlsForScanners(activeScanners);
-
-  // Full: controls reachable when all 3 scanners are available
-  const allScanners: ScannerId[] = ['gitleaks', 'npm_audit', 'checkov'];
-  const fullIds = getControlsForScanners(allScanners);
-
-  const controlDetails = SOC2_CONTROLS.map(control => ({
-    controlId: control.id,
-    controlName: control.name,
-    status: coveredIds.has(control.id) ? 'covered' as const : 'gap' as const,
-    findingCount: mappings.find(m => m.controlId === control.id)?.findings.length ?? 0,
-  }));
-
-  const pct = (n: number) => Math.round((n / SOC2_CONTROLS.length) * 100);
-
-  return {
-    coveredControls: Array.from(coveredIds),
-    missingControls: SOC2_CONTROLS
-      .filter(c => !coveredIds.has(c.id))
-      .map(c => c.id),
-    coveragePct: pct(coveredIds.size),
-    coveragePctPotential: pct(potentialIds.size),
-    coveragePctFull: pct(fullIds.size),
-    coveredControlsPotential: Array.from(potentialIds),
-    controlDetails,
-  };
+  return computeCoverageForControls(SOC2_CONTROLS, mappings, scannerStatuses);
 }
 
 /**

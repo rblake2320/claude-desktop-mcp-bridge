@@ -46,6 +46,7 @@ import { normalizeGitleaks } from './normalizers/gitleaks.js';
 import { normalizeNpmAudit } from './normalizers/npm-audit.js';
 import { normalizeCheckov } from './normalizers/checkov.js';
 import { mapFindingsToControls, computeCoverage, annotateFindingsWithControls } from './soc2-map.js';
+import { mapFindingsToHIPAAControls, computeHIPAACoverage, annotateFindingsWithHIPAAControls } from './hipaa-map.js';
 import { calculateROI } from './roi.js';
 import { generateAuditPacket } from './audit-packet.js';
 import { handleCreateTickets, handleApproveTicketPlan } from './ticket-writer.js';
@@ -57,8 +58,11 @@ import type {
   RemediationStep,
   Severity,
   ScannerId,
+  Framework,
   ToolRunTranscript,
   ScannerStatus,
+  CoverageResult,
+  HIPAACoverageResult,
   AuditManifest,
   CreateTicketsResponse,
   ApproveTicketPlanResponse,
@@ -67,7 +71,7 @@ import type {
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SERVER_NAME = 'compliance-navigator';
-const SERVER_VERSION = '0.8.0';
+const SERVER_VERSION = '0.9.0';
 const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -297,6 +301,7 @@ function buildManifest(
   runId: string,
   repoPath: string,
   scannerStatuses: ScannerStatus[],
+  framework: Framework = 'soc2',
 ): AuditManifest {
   const versions: Record<ScannerId, string | null> = {
     gitleaks: null,
@@ -333,7 +338,7 @@ function buildManifest(
     os: `${platform()} ${process.arch}`,
     nodeVersion: process.version,
     scannerVersions: versions,
-    framework: 'soc2',
+    framework,
     complianceNavigatorVersion: SERVER_VERSION,
     policy: {
       commandAllowlist,
@@ -351,12 +356,12 @@ function buildManifest(
 const tools: Tool[] = [
   {
     name: 'compliance.scan_repo',
-    description: 'Scan a repository for security findings using gitleaks (secrets), npm audit (dependencies), and checkov (IaC). Maps findings to SOC2 controls and estimates ROI.',
+    description: 'Scan a repository for security findings using gitleaks (secrets), npm audit (dependencies), and checkov (IaC). Maps findings to SOC2 or HIPAA controls and estimates ROI.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         repoPath: { type: 'string', description: 'Absolute path to the repository to scan' },
-        framework: { type: 'string', enum: ['soc2'], default: 'soc2', description: 'Compliance framework' },
+        framework: { type: 'string', enum: ['soc2', 'hipaa'], default: 'soc2', description: 'Compliance framework (soc2 or hipaa)' },
         mode: { type: 'string', enum: ['report-only', 'generate-remediation'], default: 'report-only' },
         maxMinutes: { type: 'number', default: 10, description: 'Max scan duration in minutes' },
       },
@@ -452,7 +457,7 @@ const tools: Tool[] = [
       type: 'object' as const,
       properties: {
         outputDir: { type: 'string', description: 'Directory to create the demo repo in (defaults to ./compliance-demo-repo)' },
-        preset: { type: 'string', enum: ['soc2-demo'], default: 'soc2-demo', description: 'Fixture preset' },
+        preset: { type: 'string', enum: ['soc2-demo', 'hipaa-demo'], default: 'soc2-demo', description: 'Fixture preset (soc2-demo or hipaa-demo)' },
       },
       required: [],
     },
@@ -796,13 +801,23 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
     checkovResult.transcript,
   ].filter((t): t is ToolRunTranscript => t !== null);
 
-  // Only count real findings (not scanner-missing meta-findings) for SOC2 and ROI
+  // Only count real findings (not scanner-missing meta-findings) for mapping and ROI
   const realFindings = allFindings.filter(f => !f.tags?.includes('scanner-missing'));
 
-  // SOC2 mapping (pass scanner statuses for potential coverage)
-  const mappings = mapFindingsToControls(realFindings);
-  annotateFindingsWithControls(realFindings, mappings);
-  const coverage = computeCoverage(mappings, scannerStatuses);
+  // Framework-specific control mapping
+  let coverage: CoverageResult;
+  let hipaaCoverageDetail: HIPAACoverageResult | undefined;
+
+  if (input.framework === 'hipaa') {
+    const mappings = mapFindingsToHIPAAControls(realFindings);
+    annotateFindingsWithHIPAAControls(realFindings, mappings);
+    hipaaCoverageDetail = computeHIPAACoverage(mappings, scannerStatuses);
+    coverage = hipaaCoverageDetail.technical; // headline metric is technical-only
+  } else {
+    const mappings = mapFindingsToControls(realFindings);
+    annotateFindingsWithControls(realFindings, mappings);
+    coverage = computeCoverage(mappings, scannerStatuses);
+  }
 
   // ROI (only real findings)
   const roi = calculateROI(realFindings);
@@ -830,11 +845,11 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
   const finishedAt = new Date().toISOString();
 
   // Build manifest
-  const manifest = buildManifest(runId, repoPath, scannerStatuses);
+  const manifest = buildManifest(runId, repoPath, scannerStatuses, input.framework);
 
   const response: ScanRepoResponse = {
     runId,
-    framework: 'soc2',
+    framework: input.framework,
     repoPath,
     startedAt,
     finishedAt,
@@ -843,6 +858,7 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
     countsBySeverityAll,
     countsByScanner,
     controlCoverage: coverage,
+    hipaaCoverageDetail,
     roiEstimate: roi,
     scannerStatuses,
     manifest,
@@ -942,6 +958,7 @@ async function handlePlanRemediation(args: unknown): Promise<PlanRemediationResp
     severity: finding.severity,
     files: finding.file ? [finding.file] : undefined,
     soc2Controls: finding.soc2?.controls,
+    hipaaControls: finding.hipaa?.controls,
     estimatedMinutes: EFFORT_MINUTES[finding.severity],
   }));
 
@@ -989,6 +1006,9 @@ async function handlePlanRemediation(args: unknown): Promise<PlanRemediationResp
     }
     if (step.soc2Controls?.length) {
       mdLines.push(`- **SOC2 Controls**: ${step.soc2Controls.join(', ')}`);
+    }
+    if (step.hipaaControls?.length) {
+      mdLines.push(`- **HIPAA Controls**: ${step.hipaaControls.join(', ')}`);
     }
     mdLines.push(`- **Estimated Effort**: ${step.estimatedMinutes} minutes`);
     mdLines.push('');
@@ -1239,7 +1259,21 @@ export function createComplianceServer() {
       throw new Error(`Invalid repoPath in resource URI: ${pathCheck.reason}`);
     }
 
-    const runId = params.get('runId') ?? getLatestRunId(repoPath) ?? undefined;
+    // Validate runId from URI query params (defense-in-depth against path traversal)
+    const rawRunId = params.get('runId');
+    const SAFE_RUNID_RE = /^[a-zA-Z0-9._-]+$/;
+    const runId = rawRunId
+      ? (SAFE_RUNID_RE.test(rawRunId) ? rawRunId : undefined)
+      : getLatestRunId(repoPath) ?? undefined;
+
+    // Extract framework from scan result if available
+    let framework: 'soc2' | 'hipaa' = 'soc2';
+    if (runId) {
+      const scanResult = loadScanResult(repoPath, runId);
+      if (scanResult?.manifest?.framework === 'hipaa') {
+        framework = 'hipaa';
+      }
+    }
 
     const html = generateDashboardHtml({
       repoPath,
@@ -1247,6 +1281,7 @@ export function createComplianceServer() {
       hasGhToken: !!process.env.GH_TOKEN,
       hasJiraConfig: !!(process.env.JIRA_BASE_URL && process.env.JIRA_API_TOKEN),
       serverVersion: SERVER_VERSION,
+      framework,
     });
 
     return {

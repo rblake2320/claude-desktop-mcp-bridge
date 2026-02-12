@@ -7,7 +7,7 @@
 
 // ── Enums & Literals ─────────────────────────────────────────────
 
-export type Framework = 'soc2';
+export type Framework = 'soc2' | 'hipaa';
 
 export type Mode = 'report-only' | 'generate-remediation';
 
@@ -35,6 +35,11 @@ export interface NormalizedFinding {
   tags?: string[];
   soc2?: {
     controls: string[];           // e.g. ["CC6.1", "CC6.6"]
+    rationale: string;
+    confidence: number;           // 0..1
+  };
+  hipaa?: {
+    controls: string[];           // e.g. ["164.312(a)(1)", "164.312(b)"]
     rationale: string;
     confidence: number;           // 0..1
   };
@@ -73,6 +78,45 @@ export interface SOC2Mapping {
   controlName: string;
   findings: NormalizedFinding[];
   confidence: number;
+}
+
+// ── HIPAA Mapping ────────────────────────────────────────────────
+
+export interface HIPAAControl {
+  id: string;                     // e.g. "164.312(a)(1)"
+  name: string;                   // e.g. "Access Control"
+  description: string;
+  cfrSection: string;             // e.g. "45 CFR 164.312(a)(1)"
+  safeguardType: 'technical' | 'administrative';
+  /** When true, scanner mapping is not applicable — requires human/policy evidence */
+  requiresHumanEvidence: boolean;
+  scannerMappings: Array<{
+    scanner: ScannerId;
+    /** Heuristic relevance score (0..1). NOT empirically validated. See hipaa-map.ts for methodology. */
+    confidence: number;
+  }>;
+}
+
+export interface HIPAAMapping {
+  controlId: string;
+  controlName: string;
+  findings: NormalizedFinding[];
+  confidence: number;
+}
+
+// ── HIPAA Coverage ───────────────────────────────────────────────
+
+export interface HIPAACoverageResult {
+  /** Technical safeguards (164.312) — what scanners can assess */
+  technical: CoverageResult;
+  /** Administrative safeguards (164.308) — always requires human evidence */
+  administrative: {
+    controls: Array<{ controlId: string; controlName: string; cfrSection: string }>;
+    total: number;
+    requiresHumanEvidence: true;
+  };
+  /** Combined control count for informational display only */
+  totalControls: number;
 }
 
 // ── Coverage ─────────────────────────────────────────────────────
@@ -193,6 +237,8 @@ export interface ScanRepoResponse {
   countsByScanner: Record<ScannerId, number>;
 
   controlCoverage: CoverageResult;
+  /** HIPAA-only: dual coverage with technical reach + admin placeholders */
+  hipaaCoverageDetail?: HIPAACoverageResult;
 
   roiEstimate: ROIResult;
 
@@ -221,6 +267,7 @@ export interface RemediationStep {
   files?: string[];
   commands?: string[];            // recommended commands (not auto-run)
   soc2Controls?: string[];
+  hipaaControls?: string[];
   estimatedMinutes?: number;
 }
 

@@ -16,10 +16,13 @@ export interface DashboardOptions {
   /** Whether Jira env vars are set */
   hasJiraConfig: boolean;
   serverVersion: string;
+  /** Framework of the loaded run (defaults to 'SOC2' if unknown) */
+  framework?: 'soc2' | 'hipaa';
 }
 
 export function generateDashboardHtml(opts: DashboardOptions): string {
-  const { repoPath, runId, hasGhToken, hasJiraConfig, serverVersion } = opts;
+  const { repoPath, runId, hasGhToken, hasJiraConfig, serverVersion, framework } = opts;
+  const frameworkBadge = (framework ?? 'soc2') === 'hipaa' ? 'HIPAA' : 'SOC2';
   const repoName = repoPath.replace(/\\/g, '/').split('/').filter(Boolean).slice(-2).join('/');
   const runIdDisplay = runId ?? '(none — run a scan first)';
   const ghDisabled = !hasGhToken;
@@ -314,6 +317,7 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
     <div class="header-left">
       <h1>Compliance Navigator</h1>
       <span class="badge badge-version">v${escapeHtml(serverVersion)}</span>
+      <span class="badge badge-version">${escapeHtml(frameworkBadge)}</span>
     </div>
   </div>
 
@@ -441,7 +445,7 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
               <th>Scanner</th>
               <th>Title</th>
               <th>File</th>
-              <th>SOC2 Controls</th>
+              <th>Controls</th>
             </tr>
           </thead>
           <tbody id="findings-tbody"></tbody>
@@ -576,7 +580,7 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
         '<td>' + esc(f.scanner) + '</td>' +
         '<td>' + esc(f.title) + '</td>' +
         '<td style="font-family:monospace;font-size:0.78rem">' + esc(f.file || '-') + '</td>' +
-        '<td>' + (f.soc2 ? esc(f.soc2.controls.join(', ')) : '-') + '</td>' +
+        '<td>' + (f.soc2 ? esc(f.soc2.controls.join(', ')) : f.hipaa ? esc(f.hipaa.controls.join(', ')) : '-') + '</td>' +
       '</tr>'
     ).join('');
 

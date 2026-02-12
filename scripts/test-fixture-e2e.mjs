@@ -64,7 +64,7 @@ async function rpc(proc, method, params, timeoutMs = 30000) {
 }
 
 async function main() {
-  console.log("\n=== Compliance Navigator v0.8.0 — Fixture E2E Test ===\n");
+  console.log("\n=== Compliance Navigator v0.9.0 — Fixture E2E Test ===\n");
   console.log("Server:", SERVER);
   console.log("Fixture dir:", FIXTURE_DIR);
   console.log();
@@ -153,7 +153,7 @@ async function main() {
   assert(!readResp.error, `No error: ${JSON.stringify(readResp.error)}`);
   const html = readResp.result?.contents?.[0]?.text || "";
   assert(html.includes("cn-dashboard"), "HTML has cn-dashboard");
-  assert(html.includes("0.8.0"), "HTML has v0.8.0");
+  assert(html.includes("0.9.0"), "HTML has v0.9.0");
   assert(html.includes("Create Demo Repo"), "HTML has 'Create Demo Repo' button");
   assert(html.includes("Content-Security-Policy"), "HTML has CSP meta tag");
   console.log();
@@ -307,13 +307,122 @@ async function main() {
   );
   console.log();
 
+  // ── HIPAA Tests ─────────────────────────────────────────────────
+
+  const HIPAA_FIXTURE_DIR = path.join(PROJECT_ROOT, "test-fixture-hipaa");
+  if (fs.existsSync(HIPAA_FIXTURE_DIR)) {
+    fs.rmSync(HIPAA_FIXTURE_DIR, { recursive: true, force: true });
+  }
+
+  // ── Test 17: HIPAA demo fixture + scan ──
+  console.log("Test 17: HIPAA scan_repo");
+  const hipaaFixtureResp = await rpc(proc, "tools/call", {
+    name: "compliance.create_demo_fixture",
+    arguments: { outputDir: HIPAA_FIXTURE_DIR, preset: "hipaa-demo" },
+  });
+  assert(!hipaaFixtureResp.error, `HIPAA fixture no error: ${JSON.stringify(hipaaFixtureResp.error)}`);
+  const hipaaFixture = JSON.parse(hipaaFixtureResp.result?.content?.[0]?.text);
+  assert(hipaaFixture.filesCreated.length === 8, `HIPAA fixture: 8 files created`);
+
+  // Verify HIPAA README content
+  const hipaaReadme = fs.readFileSync(path.join(HIPAA_FIXTURE_DIR, "README.md"), "utf-8");
+  assert(hipaaReadme.includes("HIPAA"), "HIPAA fixture README mentions HIPAA");
+  assert(hipaaReadme.includes("hipaa-demo"), "HIPAA fixture README mentions hipaa-demo preset");
+
+  const hipaaScanResp = await rpc(proc, "tools/call", {
+    name: "compliance.scan_repo",
+    arguments: { repoPath: HIPAA_FIXTURE_DIR, framework: "hipaa" },
+  }, 120000);
+  assert(!hipaaScanResp.error, `HIPAA scan no error: ${JSON.stringify(hipaaScanResp.error)}`);
+  const hipaaScan = JSON.parse(hipaaScanResp.result?.content?.[0]?.text);
+
+  assert(hipaaScan.framework === "hipaa", `framework is 'hipaa': ${hipaaScan.framework}`);
+  assert(hipaaScan.manifest?.framework === "hipaa", `manifest.framework is 'hipaa'`);
+  assert(typeof hipaaScan.runId === "string", `HIPAA scan returned runId: ${hipaaScan.runId}`);
+  assert(Array.isArray(hipaaScan.findings), "HIPAA scan returned findings array");
+
+  // Verify hipaaCoverageDetail exists with dual metrics
+  const hcd = hipaaScan.hipaaCoverageDetail;
+  assert(hcd != null, "hipaaCoverageDetail exists");
+  assert(hcd?.technical != null, "hipaaCoverageDetail.technical exists");
+  assert(hcd?.administrative != null, "hipaaCoverageDetail.administrative exists");
+  assert(hcd?.administrative?.total === 7, `admin total is 7: ${hcd?.administrative?.total}`);
+  assert(hcd?.administrative?.requiresHumanEvidence === true, "admin requiresHumanEvidence is true");
+  assert(typeof hcd?.totalControls === "number" && hcd.totalControls === 19, `totalControls is 19: ${hcd?.totalControls}`);
+
+  // Verify controlCoverage contains only technical controls (164.312)
+  const hipaaControlIds = (hipaaScan.controlCoverage?.controlDetails || []).map(d => d.controlId);
+  const hasAdmin308 = hipaaControlIds.some(id => id.startsWith("164.308"));
+  assert(!hasAdmin308, "controlCoverage does NOT contain 164.308 admin controls");
+  const hasTech312 = hipaaControlIds.some(id => id.startsWith("164.312"));
+  assert(hasTech312, "controlCoverage contains 164.312 technical controls");
+
+  // Verify findings have .hipaa property, NOT .soc2
+  const hipaaFindings = hipaaScan.findings.filter(f => !f.tags?.includes("scanner-missing"));
+  if (hipaaFindings.length > 0) {
+    const firstWithHipaa = hipaaFindings.find(f => f.hipaa);
+    assert(firstWithHipaa != null, "At least one finding has .hipaa property");
+    assert(firstWithHipaa?.soc2 == null, "HIPAA finding does NOT have .soc2 property");
+    assert(Array.isArray(firstWithHipaa?.hipaa?.controls), "HIPAA finding has controls array");
+  }
+  console.log();
+
+  // ── Test 18: HIPAA audit packet ──
+  console.log("Test 18: HIPAA audit packet");
+  const hipaaPacketResp = await rpc(proc, "tools/call", {
+    name: "compliance.generate_audit_packet",
+    arguments: { repoPath: HIPAA_FIXTURE_DIR, runId: hipaaScan.runId },
+  });
+  assert(!hipaaPacketResp.error, `HIPAA audit packet no error: ${JSON.stringify(hipaaPacketResp.error)}`);
+  const hipaaPacket = JSON.parse(hipaaPacketResp.result?.content?.[0]?.text);
+  assert(fs.existsSync(hipaaPacket.auditPacketPath), "HIPAA audit_packet directory exists");
+
+  const hipaaIndex = fs.readFileSync(path.join(hipaaPacket.auditPacketPath, "index.md"), "utf-8");
+  assert(hipaaIndex.includes("HIPAA"), "HIPAA index.md contains 'HIPAA'");
+  assert(hipaaIndex.includes("164.312"), "HIPAA index.md contains '164.312'");
+  assert(!hipaaIndex.includes("SOC2-Lite"), "HIPAA index.md does NOT contain 'SOC2-Lite'");
+  assert(hipaaIndex.includes("Administrative Safeguards"), "HIPAA index.md has Administrative Safeguards section");
+  assert(hipaaIndex.includes("Human Evidence"), "HIPAA index.md mentions Human Evidence");
+  assert(hipaaIndex.includes("Technical Safeguard Scanner Reach"), "HIPAA index.md has Technical Safeguard Scanner Reach");
+  console.log();
+
+  // ── Test 19: HIPAA remediation plan ──
+  console.log("Test 19: HIPAA remediation");
+  const hipaaRemedResp = await rpc(proc, "tools/call", {
+    name: "compliance.plan_remediation",
+    arguments: { repoPath: HIPAA_FIXTURE_DIR, runId: hipaaScan.runId },
+  });
+  assert(!hipaaRemedResp.error, `HIPAA remediation no error: ${JSON.stringify(hipaaRemedResp.error)}`);
+  const hipaaRemed = JSON.parse(hipaaRemedResp.result?.content?.[0]?.text);
+  assert(Array.isArray(hipaaRemed.steps), "HIPAA remediation has steps array");
+  if (hipaaRemed.steps.length > 0) {
+    const stepWithHipaa = hipaaRemed.steps.find(s => s.hipaaControls && s.hipaaControls.length > 0);
+    assert(stepWithHipaa != null, "At least one step has hipaaControls");
+    const stepWithSoc2 = hipaaRemed.steps.find(s => s.soc2Controls && s.soc2Controls.length > 0);
+    assert(stepWithSoc2 == null, "No steps have soc2Controls in HIPAA scan");
+  }
+  console.log();
+
+  // ── Test 20: HIPAA dashboard shows framework badge ──
+  console.log("Test 20: HIPAA dashboard framework badge");
+  const hipaaDashResp = await rpc(proc, "resources/read", {
+    uri: `compliance://dashboard?repoPath=${encodeURIComponent(HIPAA_FIXTURE_DIR)}&runId=${hipaaScan.runId}`,
+  });
+  assert(!hipaaDashResp.error, `HIPAA dashboard no error: ${JSON.stringify(hipaaDashResp.error)}`);
+  const hipaaDashHtml = hipaaDashResp.result?.contents?.[0]?.text || "";
+  assert(hipaaDashHtml.includes("HIPAA"), "HIPAA dashboard HTML contains 'HIPAA' badge");
+  console.log();
+
   // Cleanup
   proc.kill();
   await wait(250);
 
-  // Clean up test fixture directory
+  // Clean up test fixture directories
   if (fs.existsSync(FIXTURE_DIR)) {
     fs.rmSync(FIXTURE_DIR, { recursive: true, force: true });
+  }
+  if (fs.existsSync(HIPAA_FIXTURE_DIR)) {
+    fs.rmSync(HIPAA_FIXTURE_DIR, { recursive: true, force: true });
   }
 
   // Summary

@@ -48,7 +48,11 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   lines.push('');
   lines.push(`**Generated**: ${ts}`);
   lines.push(`**Repository**: \`${scan.repoPath}\``);
-  lines.push(`**Framework**: SOC2-Lite (20 controls)`);
+  const isHipaa = scan.manifest.framework === 'hipaa';
+  const frameworkLabel = isHipaa
+    ? 'HIPAA Security Rule: 164.312 Technical Safeguards + 164.308 Administrative Placeholders'
+    : 'SOC2-Lite (20 controls)';
+  lines.push(`**Framework**: ${frameworkLabel}`);
   lines.push(`**Run ID**: ${scan.runId}`);
   lines.push(`**Scan Period**: ${scan.startedAt} to ${scan.finishedAt}`);
   if (scan.manifest.repoCommitHash) {
@@ -68,9 +72,10 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   lines.push(`| Low | ${scan.countsBySeverity.low ?? 0} |`);
   const totalControls = scan.controlCoverage.coveredControls.length + scan.controlCoverage.missingControls.length;
   const potentialControls = scan.controlCoverage.coveredControlsPotential?.length ?? 0;
-  lines.push(`| SOC2 Scanner Reach (observed) | ${scan.controlCoverage.coveragePct}% (${scan.controlCoverage.coveredControls.length}/${totalControls}) |`);
-  lines.push(`| SOC2 Scanner Reach (potential) | ${scan.controlCoverage.coveragePctPotential ?? 0}% (${potentialControls}/${totalControls}) |`);
-  lines.push(`| SOC2 Scanner Reach (full pack) | ${scan.controlCoverage.coveragePctFull ?? 100}% |`);
+  const reachLabel = isHipaa ? 'HIPAA Technical Safeguard' : 'SOC2';
+  lines.push(`| ${reachLabel} Scanner Reach (observed) | ${scan.controlCoverage.coveragePct}% (${scan.controlCoverage.coveredControls.length}/${totalControls}) |`);
+  lines.push(`| ${reachLabel} Scanner Reach (potential) | ${scan.controlCoverage.coveragePctPotential ?? 0}% (${potentialControls}/${totalControls}) |`);
+  lines.push(`| ${reachLabel} Scanner Reach (full pack) | ${scan.controlCoverage.coveragePctFull ?? 100}% |`);
   lines.push(`| Est. Hours Saved (conservative) | ${scan.roiEstimate.hoursSavedConservative} |`);
   lines.push(`| Est. Hours Saved (likely) | ${scan.roiEstimate.hoursSavedLikely} |`);
   lines.push('');
@@ -116,8 +121,9 @@ function generateIndexMd(scan: ScanRepoResponse): string {
     lines.push('');
   }
 
-  // SOC2 Control Coverage
-  lines.push('## SOC2 Control Scanner Reach');
+  // Control Coverage
+  const coverageSectionTitle = isHipaa ? 'HIPAA Technical Safeguard Scanner Reach (164.312)' : 'SOC2 Control Scanner Reach';
+  lines.push(`## ${coverageSectionTitle}`);
   lines.push('');
   lines.push('> **Note**: "Covered" means a scanner produced findings relevant to this control. It does **not** mean the control passes audit or is implemented. See Scope Limitations below.');
   lines.push('');
@@ -132,10 +138,26 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   if (scan.controlCoverage.missingControls.length > 0) {
     lines.push('### Coverage Gaps');
     lines.push('');
-    lines.push('The following controls have no scanner coverage and require manual review:');
+    const gapLabel = isHipaa ? 'HIPAA technical controls' : 'SOC2 controls';
+    lines.push(`The following ${gapLabel} have no scanner coverage and require manual review:`);
     lines.push('');
     for (const controlId of scan.controlCoverage.missingControls) {
       lines.push(`- ${controlId}`);
+    }
+    lines.push('');
+  }
+
+  // HIPAA Administrative Safeguards section (164.308)
+  if (isHipaa && scan.hipaaCoverageDetail?.administrative) {
+    const admin = scan.hipaaCoverageDetail.administrative;
+    lines.push('## HIPAA Administrative Safeguards (Human Evidence Required)');
+    lines.push('');
+    lines.push('> **Note**: Administrative safeguards (45 CFR 164.308) require policy and process evidence that automated scanners cannot assess. These are listed here as placeholders for human review.');
+    lines.push('');
+    lines.push(`| Control | Name | CFR Section | Status |`);
+    lines.push(`|---------|------|-------------|--------|`);
+    for (const ctrl of admin.controls) {
+      lines.push(`| ${ctrl.controlId} | ${ctrl.controlName} | ${ctrl.cfrSection} | Requires Human Evidence |`);
     }
     lines.push('');
   }
@@ -173,7 +195,8 @@ function generateIndexMd(scan: ScanRepoResponse): string {
     actions.push(`Install missing scanners (${missing.join(', ')}) to expand control coverage`);
   }
   if (scan.controlCoverage.missingControls.length > 0) {
-    actions.push(`Review ${scan.controlCoverage.missingControls.length} uncovered SOC2 controls for manual assessment`);
+    const uncoveredLabel = isHipaa ? 'uncovered HIPAA technical controls' : 'uncovered SOC2 controls';
+    actions.push(`Review ${scan.controlCoverage.missingControls.length} ${uncoveredLabel} for manual assessment`);
   }
   actions.push('Run `compliance.plan_remediation` for a prioritized step-by-step fix plan');
   for (const action of actions) {
@@ -204,7 +227,13 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   lines.push('- Custom application code review beyond secret detection');
   lines.push('- Third-party vendor risk assessment');
   lines.push('');
-  lines.push('For full SOC2 compliance, combine these results with manual control assessments and an external auditor review.');
+  if (isHipaa) {
+    lines.push('This scan covers Technical Safeguards (45 CFR 164.312) only. Administrative safeguards (164.308) require policy and process evidence that automated scanners cannot assess.');
+    lines.push('');
+    lines.push('For full HIPAA compliance, combine these results with administrative safeguard documentation, workforce training records, and a covered entity risk assessment.');
+  } else {
+    lines.push('For full SOC2 compliance, combine these results with manual control assessments and an external auditor review.');
+  }
   lines.push('');
 
   // Security Policy

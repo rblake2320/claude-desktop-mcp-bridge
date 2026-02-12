@@ -29,7 +29,7 @@ const safePlanId = z.string()
   .refine(s => /[a-zA-Z0-9]/.test(s), 'planId must contain at least one alphanumeric character');
 
 export const ScanRepoSchema = z.object({
-  framework: z.literal('soc2').default('soc2'),
+  framework: z.enum(['soc2', 'hipaa']).default('soc2'),
   repoPath: safePath,
   mode: z.enum(['report-only', 'generate-remediation']).default('report-only'),
   includePaths: z.array(z.string()).optional(),
@@ -83,7 +83,7 @@ export const OpenDashboardSchema = z.object({
 
 export const CreateDemoFixtureSchema = z.object({
   outputDir: safePath.optional(),
-  preset: z.literal('soc2-demo').default('soc2-demo'),
+  preset: z.enum(['soc2-demo', 'hipaa-demo']).default('soc2-demo'),
 }).strict();
 
 export const ExportAuditPacketSchema = z.object({

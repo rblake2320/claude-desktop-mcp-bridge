@@ -194,12 +194,36 @@ Export an audit packet as a portable ZIP archive with SHA-256 integrity verifica
 
 The ZIP is written to `.compliance/exports/<runId>/audit_packet.zip` and its SHA-256 hash is recorded in the audit chain. Suitable for CI artifact upload, email delivery, or archive.
 
+#### CI/CD Integration (GitHub Actions)
+
+Run compliance scans automatically on every push or pull request:
+
+```bash
+# Run locally via the CI runner (report-only by default)
+npm run ci:compliance -- --repo-path .
+
+# Fail build on critical findings
+npm run ci:compliance -- --repo-path . --fail-on critical
+
+# Scan + ticket dry-run
+npm run ci:compliance -- --repo-path . --create-tickets --dry-run
+
+# Scan + ticket execution (requires prior approval)
+npm run ci:compliance -- --repo-path . --create-tickets --approved-plan-id <id>
+```
+
+A reusable GitHub Action workflow is included at `.github/workflows/compliance.yml`:
+- **push/PR**: scan + export ZIP + upload as GitHub Actions artifact (no tickets, ever)
+- **workflow_dispatch**: scan + export + optional ticket creation (requires explicit `createTickets=true` input)
+
+Machine-readable summary is written to `.compliance/ci/summary.json` for downstream tooling.
+
 #### Security Model
 
 These invariants hold for every scan:
 
 1. **Commands are argv-validated before execution.** Only 6 regex patterns pass the allowlist: `gitleaks detect`, `npm audit`, `checkov -d`, and their `--version` probes. Everything else throws.
-2. **No arbitrary shell evaluation.** On Linux/macOS, scanners spawn with `shell: false` (direct exec). On Windows, `shell: true` is required for `.cmd` resolution but `windowsVerbatimArguments: true` prevents injection. The manifest records which mode was used.
+2. **No arbitrary shell evaluation.** On Linux/macOS, scanners spawn with `shell: false` (direct exec). On Windows, `.exe` binaries (gitleaks, checkov) also use `shell: false`; only `.cmd` (npm) requires `shell: true`, hardened with cmd metacharacter rejection (`& | < > ^ % !` blocked) and double-quote sanitization. The manifest records per-scanner shell mode.
 3. **All writes are confined to `<repo>/.compliance/`.** The path policy validates every write target against the repo root. Directory traversal (`../`) is blocked.
 4. **Hash-chained audit log with built-in verifier.** Every tool invocation (start, end, command run, file written) is logged to `logs/compliance-audit-chain.jsonl` with SHA-256 hash chaining. Each entry includes `prevHash` and `hash`. The `compliance.verify_audit_chain` tool recomputes every hash and reports PASS/FAIL with the first broken line.
 5. **Self-documenting manifest.** Every audit packet includes `manifest.json` recording: allowed commands, shell execution mode, excluded scan paths, scanner versions, OS, Node version, and repo commit hash. The packet is reviewable without access to the server code.

@@ -1,0 +1,113 @@
+name: Compliance Scan
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      createTickets:
+        description: 'Create tickets from findings'
+        type: boolean
+        default: false
+      dryRun:
+        description: 'Dry-run ticket creation (preview only)'
+        type: boolean
+        default: true
+      approvedPlanId:
+        description: 'Approved plan ID (for ticket execution)'
+        type: string
+        required: false
+      repoPath:
+        description: 'Repository path to scan'
+        type: string
+        default: '.'
+      target:
+        description: 'Ticket target system'
+        type: choice
+        options:
+          - github
+          - jira
+        default: github
+      failOn:
+        description: 'Fail build at this severity level'
+        type: choice
+        options:
+          - none
+          - critical
+          - high
+          - medium
+        default: none
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+jobs:
+  compliance-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Install gitleaks (best-effort)
+        run: |
+          GITLEAKS_VERSION="8.18.4"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /usr/local/bin gitleaks \
+            || echo "::warning::gitleaks install failed — scanner will report as missing"
+
+      - name: Install checkov (best-effort)
+        run: |
+          pip install checkov 2>/dev/null \
+            || echo "::warning::checkov install failed — scanner will report as missing"
+
+      - name: Run compliance scan
+        id: scan
+        run: |
+          ARGS="--repo-path $INPUT_REPO_PATH --fail-on $INPUT_FAIL_ON"
+
+          # Ticket creation: only on workflow_dispatch with explicit opt-in
+          # NEVER on push or pull_request — hard safety rule
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_CREATE_TICKETS" = "true" ]; then
+            ARGS="$ARGS --create-tickets --target $INPUT_TARGET"
+            if [ -n "$INPUT_APPROVED_PLAN_ID" ]; then
+              ARGS="$ARGS --approved-plan-id $INPUT_APPROVED_PLAN_ID"
+            else
+              ARGS="$ARGS --dry-run"
+            fi
+          fi
+
+          node scripts/run-compliance.mjs $ARGS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_REPO_PATH: ${{ github.event.inputs.repoPath || '.' }}
+          INPUT_FAIL_ON: ${{ github.event.inputs.failOn || 'none' }}
+          INPUT_CREATE_TICKETS: ${{ github.event.inputs.createTickets }}
+          INPUT_TARGET: ${{ github.event.inputs.target || 'github' }}
+          INPUT_APPROVED_PLAN_ID: ${{ github.event.inputs.approvedPlanId }}
+
+      - name: Upload compliance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-audit-packet
+          path: |
+            .compliance/exports/*/audit_packet.zip
+            .compliance/ci/summary.json
+          if-no-files-found: warn
+          retention-days: 90

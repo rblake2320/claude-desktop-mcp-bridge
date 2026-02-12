@@ -21,6 +21,13 @@ const safeRunId = z.string()
   .regex(/^[a-zA-Z0-9._-]+$/, 'runId contains invalid characters')
   .refine(s => /[a-zA-Z0-9]/.test(s), 'runId must contain at least one alphanumeric character');
 
+/** Safe planId: same character rules as runId but min 6 chars. Used in approval artifact filenames. */
+const safePlanId = z.string()
+  .min(6, 'planId too short')
+  .max(64, 'planId too long')
+  .regex(/^[a-zA-Z0-9._-]+$/, 'planId contains invalid characters')
+  .refine(s => /[a-zA-Z0-9]/.test(s), 'planId must contain at least one alphanumeric character');
+
 export const ScanRepoSchema = z.object({
   framework: z.literal('soc2').default('soc2'),
   repoPath: safePath,
@@ -53,14 +60,14 @@ export const CreateTicketsSchema = z.object({
     'Must be owner/name (GitHub) or PROJECT_KEY (Jira)'
   ).optional(),
   dryRun: z.boolean().default(true),
-  approvedPlanId: z.string().optional(),
+  approvedPlanId: safePlanId.optional(),
   reopenClosed: z.boolean().default(false),
   labelPolicy: z.enum(['require-existing', 'create-if-missing']).default('require-existing'),
 }).strict();
 
 export const ApproveTicketPlanSchema = z.object({
   repoPath: safePath,
-  planId: z.string().min(6),
+  planId: safePlanId,
   approvedBy: z.string().min(1),
   reason: z.string().optional(),
 }).strict();

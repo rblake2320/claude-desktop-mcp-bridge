@@ -64,7 +64,7 @@ async function rpc(proc, method, params, timeoutMs = 30000) {
 }
 
 async function main() {
-  console.log("\n=== Compliance Navigator v0.7.0 — Fixture E2E Test ===\n");
+  console.log("\n=== Compliance Navigator v0.8.0 — Fixture E2E Test ===\n");
   console.log("Server:", SERVER);
   console.log("Fixture dir:", FIXTURE_DIR);
   console.log();
@@ -153,7 +153,7 @@ async function main() {
   assert(!readResp.error, `No error: ${JSON.stringify(readResp.error)}`);
   const html = readResp.result?.contents?.[0]?.text || "";
   assert(html.includes("cn-dashboard"), "HTML has cn-dashboard");
-  assert(html.includes("0.7.0"), "HTML has v0.7.0");
+  assert(html.includes("0.8.0"), "HTML has v0.8.0");
   assert(html.includes("Create Demo Repo"), "HTML has 'Create Demo Repo' button");
   assert(html.includes("Content-Security-Policy"), "HTML has CSP meta tag");
   console.log();
@@ -281,6 +281,29 @@ async function main() {
   assert(
     exportBadResp.result?.isError || exportBadText.includes("Error") || exportBadText.includes("not found"),
     "Export with bad runId fails gracefully"
+  );
+  console.log();
+
+  // ── Test 16: planId with path traversal rejected at schema level ──
+  console.log("Test 16: planId validation");
+  const badPlanResp = await rpc(proc, "tools/call", {
+    name: "compliance.approve_ticket_plan",
+    arguments: { repoPath: FIXTURE_DIR, planId: "../../etc/passwd", approvedBy: "test" },
+  });
+  const badPlanText = badPlanResp.result?.content?.[0]?.text || "";
+  assert(
+    badPlanResp.result?.isError || badPlanText.includes("Error") || badPlanText.includes("invalid"),
+    "planId with path traversal rejected"
+  );
+
+  const shellPlanResp = await rpc(proc, "tools/call", {
+    name: "compliance.approve_ticket_plan",
+    arguments: { repoPath: FIXTURE_DIR, planId: "plan&whoami", approvedBy: "test" },
+  });
+  const shellPlanText = shellPlanResp.result?.content?.[0]?.text || "";
+  assert(
+    shellPlanResp.result?.isError || shellPlanText.includes("Error") || shellPlanText.includes("invalid"),
+    "planId with shell metacharacters rejected"
   );
   console.log();
 

@@ -1,6 +1,6 @@
 # SYNC CONTEXT — DO NOT LOSE THIS (project is already far along)
 
-Repo: claude-desktop-mcp-bridge (public), current releases include v0.7.0.
+Repo: claude-desktop-mcp-bridge (public), current releases include v0.8.0.
 
 ## WHAT IS ALREADY SHIPPED (do NOT re-implement; build on it)
 
@@ -29,7 +29,7 @@ Compliance Navigator is a standalone MCP server: `src/compliance-bridge/server.t
 
 ## SECURITY MODEL (must remain enforced)
 
-- No shell expansion on Linux/macOS; Windows uses `shell: true` for .cmd resolution (scanner allowlist stays tight — 6 regex patterns only)
+- gitleaks/checkov spawn with `shell: false` on all platforms (.exe on Windows, direct exec on Unix); npm.cmd uses `shell: true` with cmd metachar hard-rejection + double-quote sanitization (scanner allowlist stays tight — 6 regex patterns only)
 - GitHub/Jira integrations are fetch() APIs using env tokens
 - All writes pinned under `<repo>/.compliance/` with safePath validation
 - Ticket workflow has dry-run → approve → execute with planHash binding and repoFullName included to prevent cross-repo replay
@@ -37,6 +37,7 @@ Compliance Navigator is a standalone MCP server: `src/compliance-bridge/server.t
 - Demo fixture secrets are fake and excluded by fixture .gitignore; never commit fixtures or .compliance artifacts
 - All path-accepting schema fields use `safePath` (blocks `../` traversal and null bytes)
 - All `runId` schema fields use `safeRunId` (alphanumeric, dots, underscores, hyphens; must contain at least one alphanumeric; max 64 chars)
+- All `planId`/`approvedPlanId` schema fields use `safePlanId` (same character rules as safeRunId, min 6 chars; blocks path traversal via approval artifact filenames)
 - ZIP export skips symlinks to prevent data exfiltration attacks
 
 ## PRODUCT LANGUAGE (use this wording — do not inflate)
@@ -53,11 +54,25 @@ Compliance Navigator is a standalone MCP server: `src/compliance-bridge/server.t
 2. **MSP/consultancy packaging** — deliver packet + ticket plan + verified chain
 3. **CI/CD change-control evidence** — run in CI and attach packet artifacts
 
+## REVIEW PROTOCOL (always run before commit)
+
+Every code change must pass 3 parallel subagent reviews before commit:
+1. **Peer Review** — correctness, edge cases, regressions
+2. **Skeptic Review** — security vulnerabilities, attack vectors, bypasses
+3. **Fact Checker** — verify all CLAUDE.md claims match actual source code
+
+## KNOWN PRE-EXISTING SECURITY ITEMS (track for future hardening)
+
+- ~~`planId` and `approvedPlanId` in schemas.ts lack character-class restriction~~ — FIXED in v0.8.0 (safePlanId)
+- ~~`shell: true` on Windows with unsanitized repoPath~~ — FIXED in v0.8.0 (per-command shell decision + metachar rejection)
+- `getLatestRunId` returns unsanitized directory names (mitigated by assertCompliancePath downstream)
+- TOCTOU race in symlink check (requires local write access, can't fix without replacing archiver)
+
 ## BUILD QUEUE (next targets, in order)
 
 1. ~~**ZIP export**~~ — SHIPPED in v0.7.0
-2. **GitHub Action wrapper** — scan + export zip + upload artifact + optional ticket creation. Next target.
-3. **HIPAA Security Rule mapping** — `framework: 'hipaa'` + 164.312 control map
+2. ~~**GitHub Action wrapper**~~ — SHIPPED in v0.8.0 (`scripts/run-compliance.mjs` + `.github/workflows/compliance.yml`)
+3. **HIPAA Security Rule mapping** — `framework: 'hipaa'` + 164.312 control map. Next target.
 4. **PHI/PII detector** — new scanner (Presidio or similar) alongside gitleaks/npm-audit/checkov
 
 ## ARCHITECTURE
@@ -92,4 +107,6 @@ All bridges are standalone MCP servers using StdioServerTransport.
 - `src/shared/path-policy.ts` — Path escape prevention
 - `src/shared/audit-chain.ts` — SHA-256 hash-chained JSONL log
 - `.github/workflows/ci.yml` — CI: build + smoke test (9 tools + resources)
-- `scripts/test-fixture-e2e.mjs` — 60-assertion E2E suite (real execution, no mocks)
+- `.github/workflows/compliance.yml` — GitHub Action: scan + export + upload artifact + optional tickets
+- `scripts/run-compliance.mjs` — CI runner script (JSON-RPC stdio, --fail-on, JSON summary output)
+- `scripts/test-fixture-e2e.mjs` — 62-assertion E2E suite (real execution, no mocks)

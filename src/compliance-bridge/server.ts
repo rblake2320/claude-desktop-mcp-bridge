@@ -28,7 +28,7 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -67,7 +67,7 @@ import type {
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SERVER_NAME = 'compliance-navigator';
-const SERVER_VERSION = '0.7.0';
+const SERVER_VERSION = '0.8.0';
 const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -123,13 +123,99 @@ function getAugmentedEnv(): NodeJS.ProcessEnv {
 
 const augmentedEnv = getAugmentedEnv();
 
+// ── Windows Shell Safety ────────────────────────────────────────
+
+/** cmd.exe metacharacters that must be hard-rejected when shell:true is unavoidable. */
+const CMD_METACHARS = /[&|<>^%!\x00-\x1f]/;
+
+/**
+ * Hard-reject cmd.exe metacharacters in arguments.
+ * Called BEFORE spawn when shell:true is required (e.g. npm.cmd).
+ * Quoting alone is insufficient for cmd.exe safety.
+ */
+function assertNoCmdMetachars(values: string[]): void {
+  for (const val of values) {
+    if (CMD_METACHARS.test(val)) {
+      throw new Error(
+        `Argument contains cmd.exe metacharacters (unsafe with shell:true): ${val.slice(0, 60)}`
+      );
+    }
+  }
+}
+
+/**
+ * Wrap a single argument in double quotes for cmd.exe.
+ * Applied as a second layer of defense alongside metachar rejection.
+ */
+function sanitizeForCmd(arg: string): string {
+  const escaped = arg.replace(/"/g, '""');
+  return `"${escaped}"`;
+}
+
+// ── Robust Checkov Resolution (Windows) ─────────────────────────
+
+let _resolvedCheckovCmd: string | null = null;
+
+/**
+ * On Windows, resolve the best checkov command:
+ *   prefer checkov.exe → checkov.cmd → checkov (bare).
+ * Uses `where` (Windows built-in) to probe. Caches result.
+ * On non-Windows, always returns 'checkov'.
+ */
+function resolveCheckovCmd(): string {
+  if (!isWindows) return 'checkov';
+  if (_resolvedCheckovCmd !== null) return _resolvedCheckovCmd;
+
+  for (const candidate of ['checkov.exe', 'checkov.cmd', 'checkov']) {
+    try {
+      const result = spawnSync('where', [candidate], {
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: augmentedEnv,
+      });
+      if (result.status === 0 && result.stdout.toString().trim()) {
+        _resolvedCheckovCmd = candidate;
+        return candidate;
+      }
+    } catch { /* continue to next candidate */ }
+  }
+
+  // Fallback: let isScannerMissing() handle ENOENT
+  _resolvedCheckovCmd = 'checkov';
+  return 'checkov';
+}
+
+// ── Command Execution ───────────────────────────────────────────
+
 function runCommand(command: string, args: string[], cwd: string, timeoutMs: number): Promise<SpawnResult> {
   return new Promise((resolve) => {
     const start = Date.now();
-    // On Windows, use shell for .cmd resolution and augmented PATH
-    const proc = isWindows
-      ? spawn(command, args, { cwd, shell: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'], windowsVerbatimArguments: true, env: augmentedEnv })
-      : spawn(command, args, { cwd, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let proc;
+    if (isWindows) {
+      // .exe binaries can run without cmd.exe shell — strongest safety
+      const useShell = !command.endsWith('.exe');
+      if (useShell) {
+        // Hard-reject metacharacters in all user-influenced values
+        assertNoCmdMetachars(args);
+        assertNoCmdMetachars([cwd]);
+      }
+      const sanitizedArgs = useShell ? args.map(sanitizeForCmd) : args;
+      proc = spawn(command, sanitizedArgs, {
+        cwd,
+        shell: useShell,
+        timeout: timeoutMs,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsVerbatimArguments: !useShell,
+        env: augmentedEnv,
+      });
+    } else {
+      proc = spawn(command, args, {
+        cwd,
+        timeout: timeoutMs,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    }
 
     let stdout = '';
     let stderr = '';
@@ -251,7 +337,9 @@ function buildManifest(
     complianceNavigatorVersion: SERVER_VERSION,
     policy: {
       commandAllowlist,
-      shellExecution: isWindows ? 'shell: true (Windows, cmd resolution)' : 'shell: false (direct exec)',
+      shellExecution: isWindows
+        ? 'shell: false for .exe (gitleaks, checkov); shell: true + metachar rejection + quoting for .cmd (npm)'
+        : 'shell: false (direct exec)',
       pathPolicy: 'All writes pinned to <repo>/.compliance/ -- directory escape blocked',
     },
     excludedPaths,
@@ -591,7 +679,7 @@ async function runCheckov(
   repoPath: string, outputDir: string, timeoutMs: number
 ): Promise<ScannerRunResult> {
   const outputPath = resolve(outputDir, 'checkov.json');
-  const cmd = 'checkov';
+  const cmd = resolveCheckovCmd();
   const args = ['-d', repoPath, '-o', 'json'];
 
   const fullCommand = `${cmd} ${args.join(' ')}`;

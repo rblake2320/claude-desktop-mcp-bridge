@@ -45,7 +45,7 @@ Compliance Navigator is a standalone MCP server: `src/compliance-bridge/server.t
 
 - "SOC2 Scanner Reach" not "SOC2 Compliance"
 - "HIPAA Security Rule Scanner Reach: 164.312 Technical Safeguards" — never "HIPAA compliant"
-- HIPAA technical reach % computed on 164.312 only (12 controls). Administrative placeholders (164.308, 7 controls) shown separately as "requires human evidence" — never mixed into headline %
+- HIPAA technical reach % denominator is "scannable controls only" (11 of 12 technical controls that have scanner mappings). 164.312(a)(2)(ii) Emergency Access Procedure requires human evidence and is excluded from the denominator but listed as a permanent gap in controlDetails. This means 100% full-scanner-pack reach is achievable. Administrative placeholders (164.308, 7 controls) shown separately as "requires human evidence" — never mixed into headline %
 - "Est. Hours Saved (NOT VALIDATED)" with documented ranges
 - "hash-chained log + verifier" not "tamper-proof"
 - "structured audit-support packet" not "audit-grade guarantee"
@@ -114,4 +114,4 @@ All bridges are standalone MCP servers using StdioServerTransport.
 - `.github/workflows/ci.yml` — CI: build + smoke test (9 tools + resources)
 - `.github/workflows/compliance.yml` — GitHub Action: scan + export + upload artifact + optional tickets
 - `scripts/run-compliance.mjs` — CI runner script (JSON-RPC stdio, --fail-on, JSON summary output)
-- `scripts/test-fixture-e2e.mjs` — 91-assertion E2E suite (real execution, no mocks; SOC2 + HIPAA coverage)
+- `scripts/test-fixture-e2e.mjs` — 100-assertion E2E suite (real execution, no mocks; SOC2 + HIPAA coverage)

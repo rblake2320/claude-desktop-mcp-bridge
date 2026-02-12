@@ -58,7 +58,12 @@ export function computeCoverageForControls(
   mappings: MappingLike[],
   scannerStatuses?: ScannerStatus[],
 ): CoverageResult {
-  const coveredIds = new Set(mappings.map(m => m.controlId));
+  // Defensive: only include control IDs that exist in the target control set.
+  // This prevents accidental inflation if a mapping emits a typo control ID.
+  const controlIdSet = new Set(controls.map(c => c.id));
+  const coveredIds = new Set(
+    mappings.map(m => m.controlId).filter(id => controlIdSet.has(id)),
+  );
 
   // Potential: controls reachable by scanners that actually ran (status ok or skipped)
   const activeScanners: ScannerId[] = scannerStatuses

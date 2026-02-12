@@ -413,6 +413,31 @@ async function main() {
   assert(hipaaDashHtml.includes("HIPAA"), "HIPAA dashboard HTML contains 'HIPAA' badge");
   console.log();
 
+  // ── Test 21: "HIPAA compliant" never appears (legal/marketing guardrail) ──
+  console.log("Test 21: No 'HIPAA compliant' in outputs");
+  assert(!hipaaIndex.toLowerCase().includes("hipaa compliant"), "audit index.md does NOT say 'HIPAA compliant'");
+  assert(!hipaaReadme.toLowerCase().includes("hipaa compliant"), "HIPAA README does NOT say 'HIPAA compliant'");
+  assert(!hipaaDashHtml.toLowerCase().includes("hipaa compliant"), "HIPAA dashboard does NOT say 'HIPAA compliant'");
+  console.log();
+
+  // ── Test 22: HIPAA ZIP export ──
+  console.log("Test 22: HIPAA ZIP export");
+  const hipaaExportResp = await rpc(proc, "tools/call", {
+    name: "compliance.export_audit_packet",
+    arguments: { repoPath: HIPAA_FIXTURE_DIR, runId: hipaaScan.runId },
+  });
+  assert(!hipaaExportResp.error, `HIPAA export no error: ${JSON.stringify(hipaaExportResp.error)}`);
+  const hipaaExport = JSON.parse(hipaaExportResp.result?.content?.[0]?.text);
+  assert(typeof hipaaExport.zipPath === "string", `HIPAA zipPath returned: ${hipaaExport.zipPath}`);
+  assert(fs.existsSync(hipaaExport.zipPath), "HIPAA ZIP file exists on disk");
+  assert(hipaaExport.bytes > 0, `HIPAA ZIP bytes > 0: ${hipaaExport.bytes}`);
+  // Verify SHA-256
+  const hipaaZipBytes = fs.readFileSync(hipaaExport.zipPath);
+  const hipaaZipHash = crypto.createHash("sha256").update(hipaaZipBytes).digest("hex");
+  assert(hipaaZipHash === hipaaExport.sha256, `HIPAA ZIP SHA-256 matches: ${hipaaZipHash}`);
+  assert(hipaaZipBytes[0] === 0x50 && hipaaZipBytes[1] === 0x4B, "HIPAA ZIP has PK magic bytes");
+  console.log();
+
   // Cleanup
   proc.kill();
   await wait(250);

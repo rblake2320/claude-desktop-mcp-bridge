@@ -306,11 +306,33 @@ export function computeHIPAACoverage(
   mappings: HIPAAMapping[],
   scannerStatuses?: ScannerStatus[],
 ): HIPAACoverageResult {
+  // Option A: denominator is "scannable technical reach" — only controls
+  // that have at least one scanner mapping. Technical controls with empty
+  // scannerMappings (e.g. 164.312(a)(2)(ii) Emergency Access Procedure)
+  // are listed in controlDetails as permanent gaps but do NOT inflate the
+  // denominator, so 100% full-scanner-pack reach is achievable.
+  const scannableControls = HIPAA_TECHNICAL_CONTROLS.filter(
+    c => c.scannerMappings.length > 0,
+  );
+  const humanOnlyTechnical = HIPAA_TECHNICAL_CONTROLS.filter(
+    c => c.scannerMappings.length === 0,
+  );
+
   const technical = computeCoverageForControls(
-    HIPAA_TECHNICAL_CONTROLS,
+    scannableControls,
     mappings,
     scannerStatuses,
   );
+
+  // Append human-evidence-only technical controls to controlDetails as permanent gaps
+  for (const c of humanOnlyTechnical) {
+    technical.controlDetails.push({
+      controlId: c.id,
+      controlName: `${c.name} (requires human evidence)`,
+      status: 'gap' as const,
+      findingCount: 0,
+    });
+  }
 
   const administrative = {
     controls: HIPAA_ADMIN_CONTROLS.map(c => ({

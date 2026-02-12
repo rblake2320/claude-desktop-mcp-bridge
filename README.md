@@ -101,6 +101,42 @@ Then ask Claude: *"Run a compliance scan on this repo"* -- or call the tools dir
 
 **Typical output:** 42 findings across 3 scanners, 100% SOC2 control coverage, 19-34 hours estimated remediation ROI.
 
+#### Closed-Loop Ticket Creation
+
+Turn findings into tracked work items with a secure dry-run / approve / execute flow:
+
+```jsonc
+// Step 1: Dry-run -- preview what would be created (no side effects)
+{"method":"tools/call","params":{"name":"compliance.create_tickets","arguments":{
+  "repoPath":"/path/to/repo", "dryRun": true
+}}}
+// Response: planId, wouldCreate[], skippedAsDuplicate[]
+
+// Step 2: Approve the plan (file-based, tamper-evident)
+{"method":"tools/call","params":{"name":"compliance.approve_ticket_plan","arguments":{
+  "repoPath":"/path/to/repo", "planId":"<planId>", "approvedBy":"security-lead"
+}}}
+
+// Step 3: Execute -- creates real GitHub Issues
+{"method":"tools/call","params":{"name":"compliance.create_tickets","arguments":{
+  "repoPath":"/path/to/repo", "dryRun": false, "approvedPlanId":"<planId>"
+}}}
+// Response: created[{url, number}], summary{requested, created, duplicates, reopened}
+```
+
+**One-liner demo** (scan + packet + tickets dry-run):
+```
+scan_repo → generate_audit_packet → create_tickets(dryRun=true) → approve → create_tickets(dryRun=false)
+```
+
+**Enterprise features:**
+- **Deduplication**: `CN-FINDING-ID` markers in issue body prevent duplicate issues across runs
+- **Approval gate**: SHA-256 hash-bound plans with repo identity baked in (prevents cross-repo replay)
+- **reopenClosed**: Optionally reopen closed duplicate issues instead of skipping
+- **labelPolicy**: `require-existing` (safe default) only uses labels that already exist; `create-if-missing` auto-creates them
+- **Rate limiting**: Automatic backoff on GitHub API 403/429 responses with `X-RateLimit-Remaining` monitoring
+- **Audit trail**: Every dry-run, approval, and execution logged to the tamper-evident hash chain
+
 #### Security Model
 
 These invariants hold for every scan:
@@ -114,19 +150,23 @@ These invariants hold for every scan:
 #### Output Structure
 
 ```
-<repo>/.compliance/runs/<runId>/
-  scan_result.json          # Full scan data
-  evidence/
-    gitleaks.json           # Raw scanner output
-    npm-audit.json
-    checkov.json
-  audit_packet/
-    index.md                # Executive summary + scorecard
-    findings.json           # Normalized findings
-    coverage.json           # SOC2 control coverage
-    roi.json                # ROI estimate
-    manifest.json           # Deterministic export metadata + security policy
-    evidence/               # Copies of raw outputs
+<repo>/.compliance/
+  runs/<runId>/
+    scan_result.json          # Full scan data
+    evidence/
+      gitleaks.json           # Raw scanner output
+      npm-audit.json
+      checkov.json
+    audit_packet/
+      index.md                # Executive summary + scorecard
+      findings.json           # Normalized findings
+      coverage.json           # SOC2 control coverage
+      roi.json                # ROI estimate
+      manifest.json           # Deterministic export metadata + security policy
+      evidence/               # Copies of raw outputs
+  approvals/
+    pending/<planId>.json     # Dry-run ticket plans awaiting approval
+    approved/<planId>.json    # Approved plans (hash-verified at execution time)
 ```
 
 ### 5. `task-bridge` (Planned)
@@ -194,8 +234,10 @@ claude-desktop-mcp-bridge/
 │   ├── shell-bridge/         # Shell command MCP server
 │   ├── skills-bridge/        # Skills library MCP server
 │   ├── compliance-bridge/    # SOC2 audit engine (gitleaks + npm audit + checkov)
-│   │   ├── server.ts         # MCP server with 3 tools
+│   │   ├── server.ts         # MCP server with 5 tools
 │   │   ├── contracts.ts      # All TypeScript types
+│   │   ├── schemas.ts        # Zod validation schemas
+│   │   ├── ticket-writer.ts  # GitHub Issues integration (dry-run/approve/execute)
 │   │   ├── normalizers/      # Scanner output parsers (gitleaks, npm-audit, checkov)
 │   │   ├── soc2-map.ts       # 20-control SOC2 mapping
 │   │   ├── roi.ts            # ROI estimation model

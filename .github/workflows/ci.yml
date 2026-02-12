@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test - compliance-bridge starts and lists 5 tools
+        run: |
+          RESPONSE=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1.0.0"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' \
+            | node dist/compliance-bridge/server.js 2>/dev/null \
+            | tail -1)
+
+          TOOL_COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['result']['tools']))")
+          echo "Tools found: $TOOL_COUNT"
+
+          TOOL_NAMES=$(echo "$RESPONSE" | python3 -c "import sys,json; print(' '.join(t['name'] for t in json.load(sys.stdin)['result']['tools']))")
+          echo "Tool names: $TOOL_NAMES"
+
+          if [ "$TOOL_COUNT" -ne 5 ]; then
+            echo "FAIL: Expected 5 tools, got $TOOL_COUNT"
+            exit 1
+          fi
+
+          for TOOL in compliance.scan_repo compliance.generate_audit_packet compliance.plan_remediation compliance.create_tickets compliance.approve_ticket_plan; do
+            if ! echo "$TOOL_NAMES" | grep -q "$TOOL"; then
+              echo "FAIL: Missing tool $TOOL"
+              exit 1
+            fi
+          done
+
+          echo "PASS: All 5 compliance-bridge tools present"
+
+      - name: Smoke test - skills-bridge starts and lists tools
+        run: |
+          RESPONSE=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1.0.0"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' \
+            | node dist/skills-bridge/server.js 2>/dev/null \
+            | tail -1)
+
+          TOOL_COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['result']['tools']))")
+          echo "Skills-bridge tools found: $TOOL_COUNT"
+
+          if [ "$TOOL_COUNT" -lt 1 ]; then
+            echo "FAIL: Skills-bridge returned 0 tools"
+            exit 1
+          fi
+
+          echo "PASS: Skills-bridge started and returned $TOOL_COUNT tools"

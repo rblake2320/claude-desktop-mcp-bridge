@@ -53,7 +53,7 @@ import type {
 // ── Constants ────────────────────────────────────────────────────
 
 const SERVER_NAME = 'compliance-navigator';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.4.0';
 const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];

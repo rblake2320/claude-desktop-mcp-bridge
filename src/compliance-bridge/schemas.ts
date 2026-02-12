@@ -42,8 +42,11 @@ export const CreateTicketsSchema = z.object({
   runId: z.string().optional(),
   maxItems: z.number().min(1).max(100).default(10),
   target: z.enum(['github', 'jira']).default('github'),
+  targetRepo: z.string().regex(/^[^/]+\/[^/]+$/, 'Must be owner/name format').optional(),
   dryRun: z.boolean().default(true),
   approvedPlanId: z.string().optional(),
+  reopenClosed: z.boolean().default(false),
+  labelPolicy: z.enum(['require-existing', 'create-if-missing']).default('require-existing'),
 }).strict();
 
 export const ApproveTicketPlanSchema = z.object({

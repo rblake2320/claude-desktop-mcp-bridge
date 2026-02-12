@@ -224,6 +224,8 @@ export interface PlanRemediationResponse {
 
 export type TicketTarget = 'github' | 'jira';
 
+export type LabelPolicy = 'require-existing' | 'create-if-missing';
+
 export interface TicketPlanItem {
   findingId: string;
   title: string;
@@ -237,8 +239,11 @@ export interface CreateTicketsRequest {
   runId?: string;
   maxItems?: number;
   target?: TicketTarget;
+  targetRepo?: string;
   dryRun?: boolean;
   approvedPlanId?: string;
+  reopenClosed?: boolean;
+  labelPolicy?: LabelPolicy;
 }
 
 export interface CreateTicketsResponse {
@@ -251,12 +256,14 @@ export interface CreateTicketsResponse {
 
   wouldCreate: TicketPlanItem[];
   skippedAsDuplicate: { findingId: string; existingUrl: string }[];
+  reopened?: { findingId: string; url: string; number: number }[];
 
   created?: { findingId: string; url: string; number: number }[];
   summary: {
     requested: number;
     wouldCreate: number;
     duplicates: number;
+    reopened: number;
     created: number;
   };
 }

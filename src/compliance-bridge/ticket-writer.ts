@@ -5,6 +5,10 @@
  *   - Deterministic deduplication (CN-FINDING-ID markers)
  *   - Approval gate (file-based, tamper-evident)
  *   - Enterprise-grade ticket formatting
+ *   - Rate limiting + backoff for GitHub API
+ *   - Label policy (require-existing vs create-if-missing)
+ *   - Repo targeting defense (repoFullName in plan hash)
+ *   - Reopen-closed dedup handling
  *
  * Uses Node fetch (no shell) to keep the command allowlist small.
  */
@@ -21,6 +25,7 @@ import type {
   CreateTicketsResponse,
   ApproveTicketPlanResponse,
   TicketTarget,
+  LabelPolicy,
   Severity,
 } from './contracts.js';
 
@@ -30,6 +35,11 @@ const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info']
 
 const MARKER_PREFIX = 'CN-FINDING-ID';
 const RUN_MARKER_PREFIX = 'CN-RUN-ID';
+
+// Rate limit: max concurrent requests and delay between batches
+const MAX_CONCURRENT = 2;
+const BATCH_DELAY_MS = 500;
+const RATE_LIMIT_BACKOFF_MS = 5000;
 
 // ── Git Remote Parsing ───────────────────────────────────────────
 
@@ -121,55 +131,155 @@ function githubHeaders(token: string): Record<string, string> {
 }
 
 /**
+ * Rate-limit aware fetch wrapper.
+ * Checks X-RateLimit-Remaining and backs off on 403/429.
+ */
+async function githubFetch(
+  url: string,
+  options: RequestInit & { headers: Record<string, string> },
+): Promise<Response> {
+  const res = await fetch(url, options);
+
+  // Check for secondary rate limit (403 with retry-after or rate limit message)
+  if (res.status === 403 || res.status === 429) {
+    const retryAfter = res.headers.get('retry-after');
+    const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : RATE_LIMIT_BACKOFF_MS;
+    console.error(`[ticket-writer] Rate limited (${res.status}). Backing off ${waitMs}ms.`);
+    await sleep(waitMs);
+    // Retry once
+    return fetch(url, options);
+  }
+
+  // Check remaining rate limit and log warning
+  const remaining = res.headers.get('x-ratelimit-remaining');
+  if (remaining !== null && parseInt(remaining, 10) < 10) {
+    console.error(`[ticket-writer] GitHub rate limit low: ${remaining} remaining`);
+  }
+
+  return res;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ── Deduplication Search ─────────────────────────────────────────
+
+interface DedupeResult {
+  found: boolean;
+  url?: string;
+  number?: number;
+  state?: 'open' | 'closed';
+}
+
+/**
  * Search GitHub Issues for a deduplication marker.
- * Returns the matching issue URL if found, undefined otherwise.
+ * Returns match info including state (open/closed) for reopen handling.
  */
 async function searchForDuplicate(
   owner: string,
   name: string,
   findingId: string,
   token: string,
-): Promise<string | undefined> {
-  const query = encodeURIComponent(`repo:${owner}/${name} "${MARKER_PREFIX}: ${findingId}" is:issue`);
+): Promise<DedupeResult> {
+  const query = encodeURIComponent(
+    `repo:${owner}/${name} "${MARKER_PREFIX}: ${findingId}" is:issue`
+  );
   const url = `https://api.github.com/search/issues?q=${query}&per_page=1`;
 
-  const res = await fetch(url, { headers: githubHeaders(token) });
+  const res = await githubFetch(url, { headers: githubHeaders(token) });
   if (!res.ok) {
     console.error(`[ticket-writer] GitHub search failed: ${res.status} ${res.statusText}`);
-    return undefined;
+    return { found: false };
   }
 
-  const data = (await res.json()) as { total_count: number; items: Array<{ html_url: string }> };
+  const data = (await res.json()) as {
+    total_count: number;
+    items: Array<{ html_url: string; number: number; state: string }>;
+  };
   if (data.total_count > 0 && data.items[0]) {
-    return data.items[0].html_url;
+    return {
+      found: true,
+      url: data.items[0].html_url,
+      number: data.items[0].number,
+      state: data.items[0].state as 'open' | 'closed',
+    };
   }
-  return undefined;
+  return { found: false };
 }
 
 /**
- * Ensure a label exists in the repository. Creates it if missing.
+ * Reopen a closed GitHub issue.
  */
-async function ensureLabel(
+async function reopenIssue(
   owner: string,
   name: string,
-  label: string,
-  color: string,
+  issueNumber: number,
   token: string,
 ): Promise<void> {
-  const url = `https://api.github.com/repos/${owner}/${name}/labels`;
-  const res = await fetch(url, {
-    method: 'POST',
+  const url = `https://api.github.com/repos/${owner}/${name}/issues/${issueNumber}`;
+  const res = await githubFetch(url, {
+    method: 'PATCH',
     headers: githubHeaders(token),
-    body: JSON.stringify({ name: label, color }),
+    body: JSON.stringify({ state: 'open' }),
   });
-  // 422 = already exists (fine), anything else non-2xx is a warning
-  if (!res.ok && res.status !== 422) {
-    console.error(`[ticket-writer] Label create warning for "${label}": ${res.status}`);
+  if (!res.ok) {
+    console.error(`[ticket-writer] Failed to reopen issue #${issueNumber}: ${res.status}`);
+  }
+}
+
+// ── Label Management ─────────────────────────────────────────────
+
+/**
+ * Ensure labels exist based on label policy.
+ * - 'create-if-missing': creates labels that don't exist
+ * - 'require-existing': skips creation, logs warning for missing labels
+ */
+async function ensureLabels(
+  owner: string,
+  name: string,
+  labels: Set<string>,
+  policy: LabelPolicy,
+  token: string,
+): Promise<void> {
+  if (policy === 'require-existing') {
+    // Just verify labels exist, warn about missing ones
+    const url = `https://api.github.com/repos/${owner}/${name}/labels?per_page=100`;
+    const res = await githubFetch(url, { headers: githubHeaders(token) });
+    if (res.ok) {
+      const existing = (await res.json()) as Array<{ name: string }>;
+      const existingNames = new Set(existing.map(l => l.name));
+      for (const label of labels) {
+        if (!existingNames.has(label)) {
+          console.error(
+            `[ticket-writer] Label "${label}" does not exist in repo. ` +
+            `Use labelPolicy: "create-if-missing" to auto-create, or create it manually.`
+          );
+        }
+      }
+    }
+    return;
+  }
+
+  // create-if-missing: create each label
+  for (const label of labels) {
+    const color = getLabelColor(label);
+    const url = `https://api.github.com/repos/${owner}/${name}/labels`;
+    const res = await githubFetch(url, {
+      method: 'POST',
+      headers: githubHeaders(token),
+      body: JSON.stringify({ name: label, color }),
+    });
+    // 422 = already exists (fine)
+    if (!res.ok && res.status !== 422) {
+      console.error(`[ticket-writer] Label create warning for "${label}": ${res.status}`);
+    }
+    await sleep(100); // gentle pacing for label creation
   }
 }
 
 /**
- * Create a GitHub Issue.
+ * Create a GitHub Issue with rate limiting.
  */
 async function createGitHubIssue(
   owner: string,
@@ -180,7 +290,7 @@ async function createGitHubIssue(
   token: string,
 ): Promise<{ url: string; number: number }> {
   const url = `https://api.github.com/repos/${owner}/${name}/issues`;
-  const res = await fetch(url, {
+  const res = await githubFetch(url, {
     method: 'POST',
     headers: githubHeaders(token),
     body: JSON.stringify({ title, body, labels }),
@@ -302,8 +412,14 @@ function buildLabels(finding: NormalizedFinding): string[] {
 
 // ── Plan Management ──────────────────────────────────────────────
 
-function computePlanHash(items: TicketPlanItem[]): string {
-  return createHash('sha256').update(JSON.stringify(items)).digest('hex');
+/**
+ * Compute plan hash including repoFullName for cross-repo tamper prevention.
+ * Including the repo in the hash means an approval for repo A
+ * cannot be replayed against repo B.
+ */
+function computePlanHash(items: TicketPlanItem[], repoFullName: string, runId: string): string {
+  const payload = { repoFullName, runId, items };
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
 interface PendingPlan {
@@ -311,6 +427,7 @@ interface PendingPlan {
   createdAt: string;
   target: TicketTarget;
   repo: RepoIdentity;
+  repoFullName: string;
   runId: string;
   planHash: string;
   items: TicketPlanItem[];
@@ -322,6 +439,7 @@ interface ApprovalRecord {
   approvedBy: string;
   reason?: string;
   planHash: string;
+  repoFullName: string;
 }
 
 function getApprovalsDir(repoPath: string): string {
@@ -407,36 +525,56 @@ export async function handleCreateTickets(
   target: TicketTarget,
   dryRun: boolean,
   approvedPlanId?: string,
+  targetRepo?: string,
+  reopenClosed?: boolean,
+  labelPolicy?: LabelPolicy,
 ): Promise<CreateTicketsResponse> {
   // Resolve repo identity
-  const repo = resolveRepoIdentity(repoPath);
+  let repo: RepoIdentity;
+  if (targetRepo) {
+    const [owner, name] = targetRepo.split('/');
+    repo = { owner, name };
+  } else {
+    repo = resolveRepoIdentity(repoPath);
+  }
+  const repoFullName = `${repo.owner}/${repo.name}`;
   const token = getGitHubToken();
+  const policy = labelPolicy ?? 'require-existing';
 
   // Build plan items
   const planItems = buildPlanItems(scanResult.findings, runId, maxItems);
   const planId = approvedPlanId ?? randomUUID().slice(0, 12);
 
-  // Deduplication check
+  // Deduplication check with reopen-closed support
   const wouldCreate: TicketPlanItem[] = [];
   const skippedAsDuplicate: { findingId: string; existingUrl: string }[] = [];
+  const reopenedItems: { findingId: string; url: string; number: number }[] = [];
 
   for (const item of planItems) {
-    const existingUrl = await searchForDuplicate(repo.owner, repo.name, item.findingId, token);
-    if (existingUrl) {
-      skippedAsDuplicate.push({ findingId: item.findingId, existingUrl });
+    const dup = await searchForDuplicate(repo.owner, repo.name, item.findingId, token);
+    if (dup.found && dup.url) {
+      if (dup.state === 'closed' && reopenClosed && dup.number) {
+        // Mark for reopening (or reopen immediately in execute mode)
+        reopenedItems.push({ findingId: item.findingId, url: dup.url, number: dup.number });
+      } else {
+        skippedAsDuplicate.push({ findingId: item.findingId, existingUrl: dup.url });
+      }
     } else {
       wouldCreate.push(item);
     }
+    // Gentle pacing for search API
+    await sleep(200);
   }
 
-  // If dryRun or no approved plan → save pending and return preview
+  // If dryRun or no approved plan -> save pending and return preview
   if (dryRun || !approvedPlanId) {
-    const planHash = computePlanHash(wouldCreate);
+    const planHash = computePlanHash(wouldCreate, repoFullName, runId);
     const pendingPlan: PendingPlan = {
       planId,
       createdAt: new Date().toISOString(),
       target,
       repo,
+      repoFullName,
       runId,
       planHash,
       items: wouldCreate,
@@ -451,10 +589,12 @@ export async function handleCreateTickets(
       planId,
       wouldCreate,
       skippedAsDuplicate,
+      reopened: reopenedItems.length > 0 ? reopenedItems : undefined,
       summary: {
         requested: planItems.length,
         wouldCreate: wouldCreate.length,
         duplicates: skippedAsDuplicate.length,
+        reopened: reopenedItems.length,
         created: 0,
       },
     };
@@ -480,20 +620,32 @@ export async function handleCreateTickets(
     );
   }
 
-  // Ensure labels exist
+  // Verify repo matches (cross-repo replay prevention)
+  if (approval.repoFullName !== pendingPlan.repoFullName) {
+    throw new Error(
+      `Repo mismatch: approval is for ${approval.repoFullName} but plan targets ${pendingPlan.repoFullName}`
+    );
+  }
+
+  // Ensure labels exist per policy
   const allLabels = new Set<string>();
   for (const item of pendingPlan.items) {
     for (const label of item.labels) {
       allLabels.add(label);
     }
   }
-  for (const label of allLabels) {
-    await ensureLabel(repo.owner, repo.name, label, getLabelColor(label), token);
+  await ensureLabels(repo.owner, repo.name, allLabels, policy, token);
+
+  // Reopen closed issues if requested
+  for (const item of reopenedItems) {
+    await reopenIssue(repo.owner, repo.name, item.number, token);
+    await sleep(BATCH_DELAY_MS);
   }
 
-  // Create issues
+  // Create issues with rate-limited batching
   const created: { findingId: string; url: string; number: number }[] = [];
-  for (const item of pendingPlan.items) {
+  for (let i = 0; i < pendingPlan.items.length; i++) {
+    const item = pendingPlan.items[i];
     try {
       const result = await createGitHubIssue(
         repo.owner, repo.name,
@@ -503,6 +655,11 @@ export async function handleCreateTickets(
       created.push({ findingId: item.findingId, url: result.url, number: result.number });
     } catch (err) {
       console.error(`[ticket-writer] Failed to create issue for ${item.findingId}: ${(err as Error).message}`);
+    }
+
+    // Batch delay every MAX_CONCURRENT issues
+    if ((i + 1) % MAX_CONCURRENT === 0 && i < pendingPlan.items.length - 1) {
+      await sleep(BATCH_DELAY_MS);
     }
   }
 
@@ -514,11 +671,13 @@ export async function handleCreateTickets(
     planId: approvedPlanId,
     wouldCreate: pendingPlan.items,
     skippedAsDuplicate,
+    reopened: reopenedItems.length > 0 ? reopenedItems : undefined,
     created,
     summary: {
       requested: planItems.length,
       wouldCreate: pendingPlan.items.length,
       duplicates: skippedAsDuplicate.length,
+      reopened: reopenedItems.length,
       created: created.length,
     },
   };
@@ -526,7 +685,7 @@ export async function handleCreateTickets(
 
 /**
  * Approve a pending ticket plan.
- * Writes approval artifact with matching plan hash.
+ * Writes approval artifact with matching plan hash and repo identity.
  */
 export function handleApproveTicketPlan(
   repoPath: string,
@@ -545,6 +704,7 @@ export function handleApproveTicketPlan(
     approvedBy,
     reason,
     planHash: pendingPlan.planHash,
+    repoFullName: pendingPlan.repoFullName,
   };
 
   const approvedDir = resolve(getApprovalsDir(repoPath), 'approved');

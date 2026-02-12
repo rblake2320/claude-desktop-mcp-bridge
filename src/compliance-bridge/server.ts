@@ -295,8 +295,11 @@ const tools: Tool[] = [
         runId: { type: 'string', description: 'Run ID from a previous scan (defaults to most recent)' },
         maxItems: { type: 'number', default: 10, description: 'Maximum tickets to create (default 10)' },
         target: { type: 'string', enum: ['github', 'jira'], default: 'github', description: 'Ticket system target' },
+        targetRepo: { type: 'string', description: 'Explicit owner/name override (e.g. "acme/api"). If omitted, derived from git remote.' },
         dryRun: { type: 'boolean', default: true, description: 'Preview plan without creating tickets (default true)' },
         approvedPlanId: { type: 'string', description: 'Plan ID from a previously approved dry-run (required for execution)' },
+        reopenClosed: { type: 'boolean', default: false, description: 'Reopen closed duplicate issues instead of skipping (default false)' },
+        labelPolicy: { type: 'string', enum: ['require-existing', 'create-if-missing'], default: 'require-existing', description: 'Label creation policy (default require-existing)' },
       },
       required: ['repoPath'],
     },
@@ -849,7 +852,7 @@ async function handlePlanRemediation(args: unknown): Promise<PlanRemediationResp
 
 async function handleCreateTicketsTool(args: unknown): Promise<CreateTicketsResponse> {
   const input = CreateTicketsSchema.parse(args);
-  const { repoPath, runId: requestedRunId, maxItems, target, dryRun, approvedPlanId } = input;
+  const { repoPath, runId: requestedRunId, maxItems, target, targetRepo, dryRun, approvedPlanId, reopenClosed, labelPolicy } = input;
 
   if (!existsSync(repoPath)) {
     throw new Error(`Repository path does not exist: ${repoPath}`);
@@ -866,11 +869,11 @@ async function handleCreateTicketsTool(args: unknown): Promise<CreateTicketsResp
   }
 
   auditChain.append('tool_start', 'compliance.create_tickets', {
-    runId, repoPath, target, dryRun, approvedPlanId: approvedPlanId ?? null,
+    runId, repoPath, target, targetRepo: targetRepo ?? null, dryRun, approvedPlanId: approvedPlanId ?? null,
   });
 
   const result = await handleCreateTickets(
-    repoPath, scanResult, runId, maxItems, target, dryRun, approvedPlanId,
+    repoPath, scanResult, runId, maxItems, target, dryRun, approvedPlanId, targetRepo, reopenClosed, labelPolicy,
   );
 
   auditChain.append('tool_end', 'compliance.create_tickets', {

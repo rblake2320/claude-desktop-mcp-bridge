@@ -28,6 +28,7 @@ Claude Desktop → MCP Client → MCP Bridge Servers → Local System
                             [filesystem-bridge]
                             [shell-bridge]
                             [skills-bridge]
+                            [compliance-bridge]  ← Enterprise: SOC2 audit engine
                             [task-bridge]
 ```
 
@@ -59,13 +60,82 @@ Exposes Claude Code's **entire 22-skill library**:
 - **🏆 Elite Skills (4):** Master Debugger, Ultra Architect, Clean Code, Self-Learning
 - **💡 Standard Skills (14):** AI Agent Builder, LLM Trainer, Test Automation, DevOps CI/CD, Data Engineering, Web Scraping, API Development, Database Management, Security Testing, MLOps, Cloud Infrastructure, Monitoring & Observability, Knowledge Base Builder, MCP Builder
 
-### 4. 📋 `task-bridge` (Planned)
+### 4. `compliance-bridge` (Compliance Navigator)
+
+**Compliance Navigator turns MCP from tool plumbing into an evidence-grade enterprise workflow engine.**
+
+SOC2-lite audit in 3 tools -- scan a repo, generate an auditor-ready packet, get a prioritized fix plan. Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps all findings to 20 SOC2 Trust Services controls, and estimates remediation ROI.
+
+#### Quickstart
+
+```bash
+npm install && npm run build
+```
+
+Add to Claude Desktop MCP config (`claude_desktop_config.json`):
+```json
+{
+  "compliance-bridge": {
+    "command": "node",
+    "args": ["./dist/compliance-bridge/server.js"]
+  }
+}
+```
+
+Then ask Claude: *"Run a compliance scan on this repo"* -- or call the tools directly:
+
+```jsonc
+// 1. Scan
+{"method":"tools/call","params":{"name":"compliance.scan_repo","arguments":{"repoPath":"/path/to/repo"}}}
+
+// Response includes:
+// findings[], countsBySeverity, countsByScanner, controlCoverage{coveragePct, coveragePctPotential, coveragePctFull},
+// roiEstimate{hoursSavedConservative, hoursSavedLikely}, scannerStatuses[], manifest{policy, excludedPaths}
+
+// 2. Generate audit packet
+{"method":"tools/call","params":{"name":"compliance.generate_audit_packet","arguments":{"repoPath":"/path/to/repo"}}}
+
+// 3. Get remediation plan
+{"method":"tools/call","params":{"name":"compliance.plan_remediation","arguments":{"repoPath":"/path/to/repo"}}}
+```
+
+**Typical output:** 42 findings across 3 scanners, 100% SOC2 control coverage, 19-34 hours estimated remediation ROI.
+
+#### Security Model
+
+These invariants hold for every scan:
+
+1. **Commands are argv-validated before execution.** Only 6 regex patterns pass the allowlist: `gitleaks detect`, `npm audit`, `checkov -d`, and their `--version` probes. Everything else throws.
+2. **No arbitrary shell evaluation.** On Linux/macOS, scanners spawn with `shell: false` (direct exec). On Windows, `shell: true` is required for `.cmd` resolution but `windowsVerbatimArguments: true` prevents injection. The manifest records which mode was used.
+3. **All writes are confined to `<repo>/.compliance/`.** The path policy validates every write target against the repo root. Directory traversal (`../`) is blocked.
+4. **Tamper-evident audit chain.** Every tool invocation (start, end, command run, file written) is logged to `logs/compliance-audit-chain.jsonl` with SHA-256 hash chaining. Each entry includes `prevHash` and `hash` so any modification to the log is detectable.
+5. **Self-documenting manifest.** Every audit packet includes `manifest.json` recording: allowed commands, shell execution mode, excluded scan paths, scanner versions, OS, Node version, and repo commit hash. The packet is reviewable without access to the server code.
+
+#### Output Structure
+
+```
+<repo>/.compliance/runs/<runId>/
+  scan_result.json          # Full scan data
+  evidence/
+    gitleaks.json           # Raw scanner output
+    npm-audit.json
+    checkov.json
+  audit_packet/
+    index.md                # Executive summary + scorecard
+    findings.json           # Normalized findings
+    coverage.json           # SOC2 control coverage
+    roi.json                # ROI estimate
+    manifest.json           # Deterministic export metadata + security policy
+    evidence/               # Copies of raw outputs
+```
+
+### 5. `task-bridge` (Planned)
 Task management system:
 - `create_task()`, `update_task()`, `list_tasks()`
 - Progress tracking and dependencies
 - Background task monitoring
 
-### 5. 🔍 `search-bridge` (Planned)
+### 6. `search-bridge` (Planned)
 Advanced code search:
 - `grep_search()` - Content search with regex
 - `code_analysis()` - Semantic code understanding
@@ -123,8 +193,17 @@ claude-desktop-mcp-bridge/
 │   ├── filesystem-bridge/    # File operations MCP server
 │   ├── shell-bridge/         # Shell command MCP server
 │   ├── skills-bridge/        # Skills library MCP server
+│   ├── compliance-bridge/    # SOC2 audit engine (gitleaks + npm audit + checkov)
+│   │   ├── server.ts         # MCP server with 3 tools
+│   │   ├── contracts.ts      # All TypeScript types
+│   │   ├── normalizers/      # Scanner output parsers (gitleaks, npm-audit, checkov)
+│   │   ├── soc2-map.ts       # 20-control SOC2 mapping
+│   │   ├── roi.ts            # ROI estimation model
+│   │   └── audit-packet.ts   # Evidence-grade audit packet generator
 │   ├── task-bridge/          # Task management MCP server
-│   └── shared/               # Shared utilities
+│   └── shared/               # Shared utilities (command-allowlist, path-policy, audit-chain)
+├── .gitleaks.toml            # Gitleaks exclusion config (dist/, node_modules/)
+├── .gitleaksignore           # Fingerprint-based false positive suppression
 ├── tests/                    # Test suites
 ├── docs/                     # Documentation
 ├── examples/                 # Example configurations

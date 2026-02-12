@@ -1,0 +1,6 @@
+# False positive: "Secrets: TruffleHog/GitLeaks" is a documentation string
+# recommending security scanning tools, not an actual secret.
+# See src/skills-bridge/server.ts line ~1593
+C:/Users/techai/claude-desktop-mcp-bridge/src/skills-bridge/server.ts:generic-api-key:1593
+# Same string in compiled output
+C:/Users/techai/claude-desktop-mcp-bridge/dist/skills-bridge/server.js:generic-api-key:1408

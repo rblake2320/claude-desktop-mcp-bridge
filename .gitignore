@@ -50,3 +50,10 @@ coverage/
 
 # Personal configs
 examples/configs/*-*.json
+
+# Compliance Navigator runtime artifacts
+.compliance/
+**/.compliance/
+
+# Demo repo (contains intentional secrets for testing -- never commit)
+demo-repo/

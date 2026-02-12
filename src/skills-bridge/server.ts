@@ -816,6 +816,23 @@ const SKILL_DEFINITIONS: LegacySkillDefinition[] = [
       'Debugging Windows-specific failures (ENOENT from missing shell, path blocked by regex)'
     ],
     pairsWith: ['mcp-testing', 'devops-cicd', 'master-debugger']
+  },
+  {
+    name: 'compliance-navigator',
+    description: 'Enterprise compliance scanning: runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) against repositories. Maps findings to SOC2 controls, generates evidence-grade audit packets, and estimates ROI. Separate MCP server at compliance-bridge.',
+    category: 'elite',
+    triggers: ['compliance', 'soc2', 'audit', 'security scan', 'gitleaks', 'checkov', 'npm audit', 'secrets scan', 'vulnerability scan', 'iac scan', 'audit packet', 'compliance report'],
+    capabilities: [
+      'Multi-scanner orchestration (gitleaks + npm audit + checkov)',
+      'SOC2-Lite control mapping (20 Trust Services Criteria)',
+      'Evidence-grade audit packet generation (index.md + findings.json + evidence/)',
+      'ROI estimation (hours saved by automated scanning)',
+      'Prioritized remediation planning with effort estimates',
+      'Tamper-evident audit logging with SHA256 hash chain',
+      'Command allowlisting (only 3 scanner patterns permitted)',
+      'Path-restricted writes (all output under .compliance/)'
+    ],
+    pairsWith: ['security-testing', 'devops-cicd', 'clean-code']
   }
 ];
 

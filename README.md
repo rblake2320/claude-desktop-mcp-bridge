@@ -64,7 +64,7 @@ Exposes Claude Code's **entire 22-skill library**:
 
 **Compliance Navigator turns MCP from tool plumbing into a structured compliance workflow engine.**
 
-SOC2-lite scanning in 5 tools -- scan a repo, generate an audit-support packet, get a prioritized fix plan, and create tracked work items (GitHub Issues or Jira). Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps findings to 20 SOC2 Trust Services controls, and provides remediation ROI estimates.
+SOC2-lite scanning in 6 tools plus an interactive dashboard -- scan a repo, generate an audit-support packet, get a prioritized fix plan, and create tracked work items (GitHub Issues or Jira). Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps findings to 20 SOC2 Trust Services controls, and provides remediation ROI estimates.
 
 > **Important**: This tool assists with compliance workflows but does not replace a SOC2 audit. Scanner findings indicate potential control gaps -- they do not prove controls are implemented. Coverage percentages reflect scanner reach, not auditor-verified compliance status. ROI estimates use configurable industry-informed defaults, not measured data. All outputs should be reviewed by qualified personnel before use in formal compliance processes.
 
@@ -138,6 +138,28 @@ scan_repo → generate_audit_packet → create_tickets(dryRun=true) → approve 
 - **labelPolicy**: `require-existing` (safe default) only uses labels that already exist; `create-if-missing` auto-creates them
 - **Rate limiting**: Automatic backoff on GitHub/Jira API 403/429 responses with `X-RateLimit-Remaining` monitoring
 - **Audit trail**: Every dry-run, approval, and execution logged to the hash-chained audit log
+
+#### Compliance Dashboard (MCP App)
+
+Open an interactive dashboard inside Claude Desktop or any MCP client that supports resources:
+
+```jsonc
+// Open dashboard for a repo
+{"method":"tools/call","params":{"name":"compliance.open_dashboard","arguments":{"repoPath":"/path/to/repo"}}}
+// Response: { resourceUri: "compliance://dashboard?repoPath=..." }
+
+// Render via resources/read
+{"method":"resources/read","params":{"uri":"compliance://dashboard?repoPath=/path/to/repo"}}
+// Response: HTML with id="cn-dashboard" containing the full workflow UI
+```
+
+The dashboard provides:
+- **Workflow steps**: Scan → Audit Packet → Remediation Plan → Tickets (dry-run) → Approve → Execute
+- **Findings table** with severity, scanner, file, and SOC2 control mappings
+- **Evidence panel** with scanner statuses, coverage (scanner reach), ROI estimates, and manifest
+- **Audit log viewer** with hash-chain verification
+
+If `GH_TOKEN` is not set, ticket creation buttons are disabled with a clear message.
 
 #### Security Model
 
@@ -236,7 +258,7 @@ claude-desktop-mcp-bridge/
 │   ├── shell-bridge/         # Shell command MCP server
 │   ├── skills-bridge/        # Skills library MCP server
 │   ├── compliance-bridge/    # SOC2 audit engine (gitleaks + npm audit + checkov)
-│   │   ├── server.ts         # MCP server with 5 tools
+│   │   ├── server.ts         # MCP server with 7 tools
 │   │   ├── contracts.ts      # All TypeScript types
 │   │   ├── schemas.ts        # Zod validation schemas
 │   │   ├── ticket-writer.ts  # GitHub Issues integration (dry-run/approve/execute)

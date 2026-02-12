@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-12
+
+### Added
+- **Compliance Dashboard (MCP App)**: `compliance.open_dashboard` tool + MCP resource handlers
+- Interactive single-file HTML dashboard served via `resources/read` with `id="cn-dashboard"`
+- Workflow UI: scan → audit packet → remediation → tickets (dry-run → approve → execute) → verify
+- Findings table, evidence panel, coverage stats, ROI display, manifest viewer
+- GH_TOKEN/Jira configuration detection with disabled state for unavailable actions
+- CI smoke tests for `resources/list` and `resources/read` (validates HTML contains `cn-dashboard`)
+
+### Changed
+- Compliance Navigator now exposes 7 tools (was 6) plus MCP resource handlers
+
 ## [0.4.0] - 2026-02-12
 
 ### Added
@@ -60,6 +73,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 - Shell bridge (run command, background processes, navigation)
 - Basic MCP server architecture
 
+[0.5.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.1.0...v0.2.0

@@ -1,13 +1,17 @@
 /**
  * Compliance Navigator - MCP Server
  *
- * Standalone MCP server with 6 tools:
+ * Standalone MCP server with 7 tools + MCP resource handlers:
  *   1. compliance.scan_repo              - Run gitleaks + npm audit + checkov, normalize, map SOC2, compute ROI
  *   2. compliance.generate_audit_packet  - Write structured audit-support directory
  *   3. compliance.plan_remediation       - Prioritized remediation plan
  *   4. compliance.create_tickets         - Create GitHub Issues or Jira tickets from findings
  *   5. compliance.approve_ticket_plan    - Approve a ticket creation plan
  *   6. compliance.verify_audit_chain     - Verify hash chain integrity of audit log
+ *   7. compliance.open_dashboard         - Open interactive compliance dashboard (returns resource URI)
+ *
+ * Resources:
+ *   - compliance://dashboard              - Interactive HTML dashboard (MCP App)
  *
  * Transport: StdioServerTransport (JSON-RPC over stdin/stdout)
  * All diagnostic output goes to stderr.
@@ -18,6 +22,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { spawn } from 'node:child_process';
@@ -26,7 +32,8 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { platform, homedir } from 'node:os';
 
-import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema, VerifyAuditChainSchema } from './schemas.js';
+import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema, VerifyAuditChainSchema, OpenDashboardSchema } from './schemas.js';
+import { generateDashboardHtml } from './dashboard.js';
 import { getToolRisk } from './policy.js';
 import { assertAllowedCommand, COMPLIANCE_COMMAND_ALLOWLIST } from '../shared/command-allowlist.js';
 import { assertCompliancePath, validateRepoPath } from '../shared/path-policy.js';
@@ -56,7 +63,7 @@ import type {
 // ── Constants ────────────────────────────────────────────────────
 
 const SERVER_NAME = 'compliance-navigator';
-const SERVER_VERSION = '0.4.0';
+const SERVER_VERSION = '0.5.0';
 const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -332,6 +339,18 @@ const tools: Tool[] = [
         logPath: { type: 'string', description: 'Path to audit chain JSONL file (defaults to the server\'s active log)' },
       },
       required: [],
+    },
+  },
+  {
+    name: 'compliance.open_dashboard',
+    description: 'Open the Compliance Navigator dashboard. Returns a resource URI that MCP clients can render as HTML. The dashboard provides workflow controls for all compliance tools.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        repoPath: { type: 'string', description: 'Absolute path to the repository' },
+        runId: { type: 'string', description: 'Run ID from a previous scan (defaults to most recent)' },
+      },
+      required: ['repoPath'],
     },
   },
 ];
@@ -940,15 +959,102 @@ function handleVerifyAuditChain(args: unknown): VerifyResult {
   return auditChain.verify();
 }
 
+// ── Dashboard Handler ─────────────────────────────────────────────
+
+interface OpenDashboardResponse {
+  resourceUri: string;
+  repoPath: string;
+  runId: string | null;
+  message: string;
+}
+
+function handleOpenDashboard(args: unknown): OpenDashboardResponse {
+  const input = OpenDashboardSchema.parse(args);
+  const { repoPath, runId: requestedRunId } = input;
+
+  if (!existsSync(repoPath)) {
+    throw new Error(`Repository path does not exist: ${repoPath}`);
+  }
+
+  const runId = requestedRunId ?? getLatestRunId(repoPath) ?? null;
+  const params = new URLSearchParams({ repoPath });
+  if (runId) params.set('runId', runId);
+
+  const resourceUri = `compliance://dashboard?${params.toString()}`;
+
+  return {
+    resourceUri,
+    repoPath,
+    runId,
+    message: `Dashboard ready. Render via resources/read with URI: ${resourceUri}`,
+  };
+}
+
 // ── MCP Server ───────────────────────────────────────────────────
 
 export function createComplianceServer() {
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, resources: {} } },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+
+  // ── Resource Handlers (MCP App Dashboard) ──────────────────────
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: [
+      {
+        uri: 'compliance://dashboard',
+        name: 'Compliance Navigator Dashboard',
+        description: 'Interactive HTML dashboard for the compliance workflow. Pass repoPath and optional runId as query parameters.',
+        mimeType: 'text/html',
+      },
+    ],
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const uri = request.params.uri;
+
+    // Strict URI match: must be exactly "compliance://dashboard" or "compliance://dashboard?..."
+    if (uri !== 'compliance://dashboard' && !uri.startsWith('compliance://dashboard?')) {
+      throw new Error(`Unknown resource URI: ${uri}`);
+    }
+
+    // Parse query params from URI
+    const questionMark = uri.indexOf('?');
+    const params = questionMark >= 0
+      ? new URLSearchParams(uri.slice(questionMark + 1))
+      : new URLSearchParams();
+
+    const repoPath = params.get('repoPath') ?? process.cwd();
+
+    // Validate repoPath — same checks as tool handlers
+    const pathCheck = validateRepoPath(repoPath);
+    if (!pathCheck.valid) {
+      throw new Error(`Invalid repoPath in resource URI: ${pathCheck.reason}`);
+    }
+
+    const runId = params.get('runId') ?? getLatestRunId(repoPath) ?? undefined;
+
+    const html = generateDashboardHtml({
+      repoPath,
+      runId,
+      hasGhToken: !!process.env.GH_TOKEN,
+      hasJiraConfig: !!(process.env.JIRA_BASE_URL && process.env.JIRA_API_TOKEN),
+      serverVersion: SERVER_VERSION,
+    });
+
+    return {
+      contents: [
+        {
+          uri,
+          mimeType: 'text/html',
+          text: html,
+        },
+      ],
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
@@ -977,6 +1083,9 @@ export function createComplianceServer() {
           break;
         case 'compliance.verify_audit_chain':
           result = handleVerifyAuditChain(args);
+          break;
+        case 'compliance.open_dashboard':
+          result = handleOpenDashboard(args);
           break;
         default:
           throw new Error(`Unknown tool: ${name}`);

@@ -1,7 +1,7 @@
 /**
  * Compliance Navigator - Zod Validation Schemas
  *
- * Input validation for all 3 compliance-bridge tools.
+ * Input validation for all 7 compliance-bridge tools.
  */
 
 import { z } from 'zod';
@@ -62,6 +62,13 @@ export const ApproveTicketPlanSchema = z.object({
 export const VerifyAuditChainSchema = z.object({
   logPath: z.string().optional(),
 }).strict();
+
+export const OpenDashboardSchema = z.object({
+  repoPath: safePath,
+  runId: z.string().optional(),
+}).strict();
+
+export type OpenDashboardInput = z.infer<typeof OpenDashboardSchema>;
 
 export type ScanRepoInput = z.infer<typeof ScanRepoSchema>;
 export type GenerateAuditPacketInput = z.infer<typeof GenerateAuditPacketSchema>;

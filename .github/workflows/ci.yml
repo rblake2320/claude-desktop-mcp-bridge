@@ -28,7 +28,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Smoke test - compliance-bridge starts and lists 6 tools
+      - name: Smoke test - compliance-bridge starts and lists 7 tools
         run: |
           RESPONSE=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1.0.0"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' \
             | node dist/compliance-bridge/server.js 2>/dev/null \
@@ -40,19 +40,47 @@ jobs:
           TOOL_NAMES=$(echo "$RESPONSE" | python3 -c "import sys,json; print(' '.join(t['name'] for t in json.load(sys.stdin)['result']['tools']))")
           echo "Tool names: $TOOL_NAMES"
 
-          if [ "$TOOL_COUNT" -ne 6 ]; then
-            echo "FAIL: Expected 6 tools, got $TOOL_COUNT"
+          if [ "$TOOL_COUNT" -ne 7 ]; then
+            echo "FAIL: Expected 7 tools, got $TOOL_COUNT"
             exit 1
           fi
 
-          for TOOL in compliance.scan_repo compliance.generate_audit_packet compliance.plan_remediation compliance.create_tickets compliance.approve_ticket_plan compliance.verify_audit_chain; do
+          for TOOL in compliance.scan_repo compliance.generate_audit_packet compliance.plan_remediation compliance.create_tickets compliance.approve_ticket_plan compliance.verify_audit_chain compliance.open_dashboard; do
             if ! echo "$TOOL_NAMES" | grep -q "$TOOL"; then
               echo "FAIL: Missing tool $TOOL"
               exit 1
             fi
           done
 
-          echo "PASS: All 6 compliance-bridge tools present"
+          echo "PASS: All 7 compliance-bridge tools present"
+
+      - name: Smoke test - compliance-bridge resources/list and resources/read
+        run: |
+          RESPONSE=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1.0.0"}}}\n{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}\n' \
+            | node dist/compliance-bridge/server.js 2>/dev/null \
+            | tail -1)
+
+          RESOURCE_COUNT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['result']['resources']))")
+          echo "Resources found: $RESOURCE_COUNT"
+
+          if [ "$RESOURCE_COUNT" -lt 1 ]; then
+            echo "FAIL: Expected at least 1 resource, got $RESOURCE_COUNT"
+            exit 1
+          fi
+
+          echo "PASS: resources/list returned $RESOURCE_COUNT resources"
+
+          # Test resources/read returns HTML with cn-dashboard
+          READ_RESPONSE=$(printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1.0.0"}}}\n{"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"compliance://dashboard"}}\n' \
+            | node dist/compliance-bridge/server.js 2>/dev/null \
+            | tail -1)
+
+          if echo "$READ_RESPONSE" | python3 -c "import sys,json; r=json.load(sys.stdin)['result']['contents'][0]['text']; assert 'cn-dashboard' in r; print('PASS: resources/read contains cn-dashboard')"; then
+            true
+          else
+            echo "FAIL: resources/read does not contain cn-dashboard"
+            exit 1
+          fi
 
       - name: Smoke test - skills-bridge starts and lists tools
         run: |

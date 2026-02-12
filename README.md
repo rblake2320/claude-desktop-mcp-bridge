@@ -64,7 +64,7 @@ Exposes Claude Code's **entire 22-skill library**:
 
 **Compliance Navigator turns MCP from tool plumbing into a structured compliance workflow engine.**
 
-SOC2-lite scanning in 7 tools with an interactive dashboard -- scan a repo, generate an audit-support packet, get a prioritized fix plan, and create tracked work items (GitHub Issues or Jira). Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps findings to 20 SOC2 Trust Services controls, and provides remediation ROI estimates.
+SOC2-lite scanning in 8 tools with an interactive dashboard -- scan a repo, generate an audit-support packet, get a prioritized fix plan, and create tracked work items (GitHub Issues or Jira). Runs gitleaks (secrets), npm audit (dependencies), and checkov (IaC) through a strict command allowlist, maps findings to 20 SOC2 Trust Services controls, and provides remediation ROI estimates.
 
 > **Important**: This tool assists with compliance workflows but does not replace a SOC2 audit. Scanner findings indicate potential control gaps -- they do not prove controls are implemented. Coverage percentages reflect scanner reach, not auditor-verified compliance status. ROI estimates use configurable industry-informed defaults, not measured data. All outputs should be reviewed by qualified personnel before use in formal compliance processes.
 
@@ -160,6 +160,20 @@ The dashboard provides:
 - **Audit log viewer** with hash-chain verification
 
 If `GH_TOKEN` is not set, ticket creation buttons are disabled with a clear message.
+
+#### Demo Fixture Generator
+
+Create a self-contained demo repo with intentional findings for all 3 scanners:
+
+```bash
+# Via MCP tool
+compliance.create_demo_fixture({ outputDir: "/tmp/demo-repo" })
+
+# Then scan it
+compliance.scan_repo({ repoPath: "/tmp/demo-repo" })
+```
+
+Generates fake AWS keys (gitleaks), vulnerable npm deps (npm audit), insecure Terraform + Dockerfile (checkov). All secrets are clearly marked TEST ONLY.
 
 #### Security Model
 
@@ -258,7 +272,7 @@ claude-desktop-mcp-bridge/
 │   ├── shell-bridge/         # Shell command MCP server
 │   ├── skills-bridge/        # Skills library MCP server
 │   ├── compliance-bridge/    # SOC2 audit engine (gitleaks + npm audit + checkov)
-│   │   ├── server.ts         # MCP server with 7 tools
+│   │   ├── server.ts         # MCP server with 8 tools
 │   │   ├── contracts.ts      # All TypeScript types
 │   │   ├── schemas.ts        # Zod validation schemas
 │   │   ├── ticket-writer.ts  # GitHub Issues integration (dry-run/approve/execute)

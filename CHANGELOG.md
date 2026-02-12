@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-02-12
+
+### Added
+- **Demo Fixture Generator**: `compliance.create_demo_fixture` tool creates a self-contained repo with intentional findings for all 3 scanners
+- SOC2-demo preset with fake AWS keys (gitleaks), vulnerable npm deps (npm audit), insecure Terraform + Dockerfile (checkov)
+- All fake secrets clearly marked TEST ONLY with DO-NOT-DEPLOY banners on IaC configs
+- Path-safe: validates output directory, prevents path traversal
+
+### Changed
+- Compliance Navigator now exposes 8 tools (was 7) plus MCP resource handlers
+
 ## [0.5.0] - 2026-02-12
 
 ### Added
@@ -73,6 +84,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 - Shell bridge (run command, background processes, navigation)
 - Basic MCP server architecture
 
+[0.6.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rblake2320/claude-desktop-mcp-bridge/compare/v0.2.0...v0.3.0

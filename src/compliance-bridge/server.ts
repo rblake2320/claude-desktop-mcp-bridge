@@ -1,7 +1,7 @@
-/**
+﻿/**
  * Compliance Navigator - MCP Server
  *
- * Standalone MCP server with 7 tools + MCP resource handlers:
+ * Standalone MCP server with 8 tools + MCP resource handlers:
  *   1. compliance.scan_repo              - Run gitleaks + npm audit + checkov, normalize, map SOC2, compute ROI
  *   2. compliance.generate_audit_packet  - Write structured audit-support directory
  *   3. compliance.plan_remediation       - Prioritized remediation plan
@@ -9,6 +9,7 @@
  *   5. compliance.approve_ticket_plan    - Approve a ticket creation plan
  *   6. compliance.verify_audit_chain     - Verify hash chain integrity of audit log
  *   7. compliance.open_dashboard         - Open interactive compliance dashboard (returns resource URI)
+ *   8. compliance.create_demo_fixture    - Generate a demo repo with intentional findings for all 3 scanners
  *
  * Resources:
  *   - compliance://dashboard              - Interactive HTML dashboard (MCP App)
@@ -32,8 +33,9 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { platform, homedir } from 'node:os';
 
-import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema, VerifyAuditChainSchema, OpenDashboardSchema } from './schemas.js';
+import { ScanRepoSchema, GenerateAuditPacketSchema, PlanRemediationSchema, CreateTicketsSchema, ApproveTicketPlanSchema, VerifyAuditChainSchema, OpenDashboardSchema, CreateDemoFixtureSchema } from './schemas.js';
 import { generateDashboardHtml } from './dashboard.js';
+import { createDemoFixture, type CreateDemoFixtureResponse } from './demo-fixture.js';
 import { getToolRisk } from './policy.js';
 import { assertAllowedCommand, COMPLIANCE_COMMAND_ALLOWLIST } from '../shared/command-allowlist.js';
 import { assertCompliancePath, validateRepoPath } from '../shared/path-policy.js';
@@ -60,10 +62,10 @@ import type {
   ApproveTicketPlanResponse,
 } from './contracts.js';
 
-// ── Constants ────────────────────────────────────────────────────
+// â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SERVER_NAME = 'compliance-navigator';
-const SERVER_VERSION = '0.5.0';
+const SERVER_VERSION = '0.6.0';
 const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -79,13 +81,13 @@ const EFFORT_MINUTES: Record<Severity, number> = {
   info: 5,
 };
 
-// ── Audit Chain ──────────────────────────────────────────────────
+// â”€â”€ Audit Chain â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const auditChain = new AuditChain(
   resolve(process.cwd(), 'logs', 'compliance-audit-chain.jsonl')
 );
 
-// ── Scanner Execution ────────────────────────────────────────────
+// â”€â”€ Scanner Execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface SpawnResult {
   exitCode: number;
@@ -153,7 +155,7 @@ function runCommand(command: string, args: string[], cwd: string, timeoutMs: num
   });
 }
 
-// ── Scanner Result with Status ────────────────────────────────────
+// â”€â”€ Scanner Result with Status â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface ScannerRunResult {
   findings: NormalizedFinding[];
@@ -254,7 +256,7 @@ function buildManifest(
   };
 }
 
-// ── Tool Definitions ─────────────────────────────────────────────
+// â”€â”€ Tool Definitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const tools: Tool[] = [
   {
@@ -353,9 +355,21 @@ const tools: Tool[] = [
       required: ['repoPath'],
     },
   },
+  {
+    name: 'compliance.create_demo_fixture',
+    description: 'Create a demo repository with intentional compliance findings for all 3 scanners (gitleaks, npm audit, checkov). Use this to test the full workflow end-to-end without touching real code. All secrets are fake test values. All IaC configs are marked DO-NOT-DEPLOY.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        outputDir: { type: 'string', description: 'Directory to create the demo repo in (defaults to ./compliance-demo-repo)' },
+        preset: { type: 'string', enum: ['soc2-demo'], default: 'soc2-demo', description: 'Fixture preset' },
+      },
+      required: [],
+    },
+  },
 ];
 
-// ── Scan Result Storage ──────────────────────────────────────────
+// â”€â”€ Scan Result Storage â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 // In-memory store of recent scan results (also persisted to disk)
 const scanResults = new Map<string, ScanRepoResponse>();
@@ -393,7 +407,7 @@ function loadScanResult(repoPath: string, runId: string): ScanRepoResponse | und
   return undefined;
 }
 
-// ── Scanner Runners ──────────────────────────────────────────────
+// â”€â”€ Scanner Runners â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function runGitleaks(
   repoPath: string, outputDir: string, timeoutMs: number
@@ -611,7 +625,7 @@ async function runCheckov(
   };
 }
 
-// ── Tool Handlers ────────────────────────────────────────────────
+// â”€â”€ Tool Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
   const input = ScanRepoSchema.parse(args);
@@ -883,7 +897,7 @@ async function handlePlanRemediation(args: unknown): Promise<PlanRemediationResp
   return response;
 }
 
-// ── Ticket Handlers ──────────────────────────────────────────────
+// â”€â”€ Ticket Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function handleCreateTicketsTool(args: unknown): Promise<CreateTicketsResponse> {
   const input = CreateTicketsSchema.parse(args);
@@ -944,7 +958,7 @@ async function handleApproveTicketPlanTool(args: unknown): Promise<ApproveTicket
   return result;
 }
 
-// ── Verify Handler ───────────────────────────────────────────────
+// â”€â”€ Verify Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function handleVerifyAuditChain(args: unknown): VerifyResult {
   const input = VerifyAuditChainSchema.parse(args);
@@ -959,7 +973,30 @@ function handleVerifyAuditChain(args: unknown): VerifyResult {
   return auditChain.verify();
 }
 
-// ── Dashboard Handler ─────────────────────────────────────────────
+// â”€â”€ Demo Fixture Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+function handleCreateDemoFixture(args: unknown): CreateDemoFixtureResponse {
+  const input = CreateDemoFixtureSchema.parse(args);
+
+  auditChain.append('tool_start', 'compliance.create_demo_fixture', {
+    outputDir: input.outputDir ?? null,
+    preset: input.preset ?? 'soc2-demo',
+  });
+
+  const result = createDemoFixture({
+    outputDir: input.outputDir,
+    preset: input.preset,
+  });
+
+  auditChain.append('tool_end', 'compliance.create_demo_fixture', {
+    outputDir: result.outputDir,
+    filesCreated: result.filesCreated.length,
+  });
+
+  return result;
+}
+
+// â”€â”€ Dashboard Handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface OpenDashboardResponse {
   resourceUri: string;
@@ -990,7 +1027,7 @@ function handleOpenDashboard(args: unknown): OpenDashboardResponse {
   };
 }
 
-// ── MCP Server ───────────────────────────────────────────────────
+// â”€â”€ MCP Server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function createComplianceServer() {
   const server = new Server(
@@ -1000,7 +1037,7 @@ export function createComplianceServer() {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
-  // ── Resource Handlers (MCP App Dashboard) ──────────────────────
+  // â”€â”€ Resource Handlers (MCP App Dashboard) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [
@@ -1029,7 +1066,7 @@ export function createComplianceServer() {
 
     const repoPath = params.get('repoPath') ?? process.cwd();
 
-    // Validate repoPath — same checks as tool handlers
+    // Validate repoPath â€” same checks as tool handlers
     const pathCheck = validateRepoPath(repoPath);
     if (!pathCheck.valid) {
       throw new Error(`Invalid repoPath in resource URI: ${pathCheck.reason}`);
@@ -1087,6 +1124,9 @@ export function createComplianceServer() {
         case 'compliance.open_dashboard':
           result = handleOpenDashboard(args);
           break;
+        case 'compliance.create_demo_fixture':
+          result = handleCreateDemoFixture(args);
+          break;
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
@@ -1114,7 +1154,7 @@ export function createComplianceServer() {
   return server;
 }
 
-// ── Main Entry ───────────────────────────────────────────────────
+// â”€â”€ Main Entry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function main() {
   const server = createComplianceServer();

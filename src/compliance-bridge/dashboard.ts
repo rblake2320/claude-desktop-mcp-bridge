@@ -400,6 +400,17 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
     </div>
 
     <div class="card">
+      <div class="card-title">Quick Start</div>
+      <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:10px">
+        No repo to scan? Generate a demo repo with intentional findings for all 3 scanners.
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="btn-demo-fixture" onclick="runAction('demo-fixture')">Create Demo Repo</button>
+      </div>
+      <div id="demo-fixture-result"></div>
+    </div>
+
+    <div class="card">
       <div class="card-title">Audit Chain</div>
       <div class="btn-row">
         <button class="btn" id="btn-verify" onclick="runAction('verify')">Verify Audit Chain</button>
@@ -694,6 +705,14 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
           formatToolCall('compliance.verify_audit_chain', {}), 'info');
         break;
       }
+      case 'demo-fixture': {
+        setOutput('Demo fixture requested.\\n\\nCall this tool to create a demo repo with intentional findings:\\n\\n' +
+          formatToolCall('compliance.create_demo_fixture', {}), 'info');
+        document.getElementById('demo-fixture-result').innerHTML =
+          '<div class="alert alert-info" style="margin-top:8px">Copy the JSON-RPC call above and execute it via your MCP client. ' +
+          'Then scan the generated directory.</div>';
+        break;
+      }
     }
   };
 
@@ -708,6 +727,11 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
     getState: () => ({ ...state }),
     setPlanId: (id) => { state.planId = id; },
     setApprovedPlanId: (id) => { state.approvedPlanId = id; enableButton('btn-tickets-exec', true); },
+    setRepoPath: (path) => {
+      state.repoPath = path;
+      document.getElementById('ctx-path').textContent = path;
+      document.getElementById('ctx-repo').textContent = path.replace(/\\\\/g, '/').split('/').filter(Boolean).slice(-2).join('/');
+    },
   };
 })();
 </script>

@@ -28,7 +28,7 @@ Claude Desktop → MCP Client → MCP Bridge Servers → Local System
                             [filesystem-bridge]
                             [shell-bridge]
                             [skills-bridge]
-                            [compliance-bridge]  ← Enterprise: SOC2 audit engine
+                            [compliance-bridge]  ← SOC2-lite compliance scanner
                             [task-bridge]
 ```
 
@@ -146,7 +146,7 @@ These invariants hold for every scan:
 1. **Commands are argv-validated before execution.** Only 6 regex patterns pass the allowlist: `gitleaks detect`, `npm audit`, `checkov -d`, and their `--version` probes. Everything else throws.
 2. **No arbitrary shell evaluation.** On Linux/macOS, scanners spawn with `shell: false` (direct exec). On Windows, `shell: true` is required for `.cmd` resolution but `windowsVerbatimArguments: true` prevents injection. The manifest records which mode was used.
 3. **All writes are confined to `<repo>/.compliance/`.** The path policy validates every write target against the repo root. Directory traversal (`../`) is blocked.
-4. **Tamper-evident audit chain.** Every tool invocation (start, end, command run, file written) is logged to `logs/compliance-audit-chain.jsonl` with SHA-256 hash chaining. Each entry includes `prevHash` and `hash` so any modification to the log is detectable.
+4. **Hash-chained audit log with built-in verifier.** Every tool invocation (start, end, command run, file written) is logged to `logs/compliance-audit-chain.jsonl` with SHA-256 hash chaining. Each entry includes `prevHash` and `hash`. The `compliance.verify_audit_chain` tool recomputes every hash and reports PASS/FAIL with the first broken line.
 5. **Self-documenting manifest.** Every audit packet includes `manifest.json` recording: allowed commands, shell execution mode, excluded scan paths, scanner versions, OS, Node version, and repo commit hash. The packet is reviewable without access to the server code.
 
 #### Output Structure
@@ -243,7 +243,7 @@ claude-desktop-mcp-bridge/
 │   │   ├── normalizers/      # Scanner output parsers (gitleaks, npm-audit, checkov)
 │   │   ├── soc2-map.ts       # 20-control SOC2 mapping
 │   │   ├── roi.ts            # ROI estimation model
-│   │   └── audit-packet.ts   # Evidence-grade audit packet generator
+│   │   └── audit-packet.ts   # Structured audit-support packet generator
 │   ├── task-bridge/          # Task management MCP server
 │   └── shared/               # Shared utilities (command-allowlist, path-policy, audit-chain)
 ├── .gitleaks.toml            # Gitleaks exclusion config (dist/, node_modules/)
@@ -382,13 +382,13 @@ node -e "
 
 **Why trust-based quarantine?**
 
-- **🔒 Enterprise Safe**: SYSTEM and VERIFIED skills never prompt users
+- **🔒 Low-Friction Trusted Skills**: SYSTEM and VERIFIED skills never prompt users
 - **🚀 Innovation Friendly**: Community can contribute UNTRUSTED skills freely
 - **🛡️ User Control**: Clear approval workflow for risky operations
 - **📈 Scalable**: Router pattern enables unlimited skills without context bloat
 - **🏪 Marketplace Ready**: Foundation for skill publishers and monetization
 
-### Production Infrastructure
+### Infrastructure
 
 **Backwards Compatible**: All 22 legacy skills preserved and enhanced
 **Router Pattern**: Skills loaded on-demand, preventing context overflow

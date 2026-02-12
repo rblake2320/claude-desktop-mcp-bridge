@@ -22,7 +22,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), version
 
 ### Changed
 - Compliance Navigator now exposes 6 tools (was 3)
-- README updated with closed-loop workflow documentation and enterprise feature list
+- README updated with closed-loop workflow documentation and feature list
 - Output structure diagram updated with `approvals/` directory
 
 ## [0.3.0] - 2026-02-11

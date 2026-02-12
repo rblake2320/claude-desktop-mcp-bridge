@@ -825,10 +825,10 @@ const SKILL_DEFINITIONS: LegacySkillDefinition[] = [
     capabilities: [
       'Multi-scanner orchestration (gitleaks + npm audit + checkov)',
       'SOC2-Lite control mapping (20 Trust Services Criteria)',
-      'Evidence-grade audit packet generation (index.md + findings.json + evidence/)',
-      'ROI estimation (hours saved by automated scanning)',
+      'Structured audit-support packet (index.md + findings.json + evidence/)',
+      'ROI estimation with configurable defaults (not validated)',
       'Prioritized remediation planning with effort estimates',
-      'Tamper-evident audit logging with SHA256 hash chain',
+      'Hash-chained audit log with built-in verifier',
       'Command allowlisting (only 3 scanner patterns permitted)',
       'Path-restricted writes (all output under .compliance/)'
     ],

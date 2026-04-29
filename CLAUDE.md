@@ -75,7 +75,7 @@ Every code change must pass 3 parallel subagent reviews before commit:
 
 1. ~~**ZIP export**~~ — SHIPPED in v0.7.0
 2. ~~**GitHub Action wrapper**~~ — SHIPPED in v0.8.0 (`scripts/run-compliance.mjs` + `.github/workflows/compliance.yml`)
-3. ~~**HIPAA Security Rule mapping**~~ — SHIPPED in v0.9.0 (`hipaa-map.ts` + `coverage-shared.ts`, 12 technical controls + 7 admin placeholders, dual reach metrics, 91-assertion E2E suite)
+3. ~~**HIPAA Security Rule mapping**~~ — SHIPPED in v0.9.0 (`hipaa-map.ts` + `coverage-shared.ts`, 12 technical controls + 7 admin placeholders, dual reach metrics, 99-assertion E2E suite)
 4. **PHI/PII detector** — new scanner (Presidio or similar) alongside gitleaks/npm-audit/checkov. Next target.
 
 ## ARCHITECTURE
@@ -114,4 +114,4 @@ All bridges are standalone MCP servers using StdioServerTransport.
 - `.github/workflows/ci.yml` — CI: build + smoke test (9 tools + resources)
 - `.github/workflows/compliance.yml` — GitHub Action: scan + export + upload artifact + optional tickets
 - `scripts/run-compliance.mjs` — CI runner script (JSON-RPC stdio, --fail-on, JSON summary output)
-- `scripts/test-fixture-e2e.mjs` — 100-assertion E2E suite (real execution, no mocks; SOC2 + HIPAA coverage)
+- `scripts/test-fixture-e2e.mjs` — 99-assertion E2E suite (real execution, no mocks; SOC2 + HIPAA coverage)

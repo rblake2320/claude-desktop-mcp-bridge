@@ -3,8 +3,8 @@
  * Phase 3A: SkillLoader for scanning and loading skills from directory structure
  */
 
-import { readdir, readFile, access } from 'fs/promises';
-import { join } from 'path';
+import { readdir, readFile, access, lstat } from 'fs/promises';
+import { join, sep } from 'path';
 import { homedir } from 'os';
 import { createHash } from 'node:crypto';
 import {
@@ -31,6 +31,7 @@ import {
 export class SkillLoader {
   private scanCache: Map<string, { lastScan: Date; result: SkillScanResult }> = new Map();
   private trustCache: Map<string, TrustValidationResult> = new Map();
+  private cachedRootSkills: SkillManifest[] | null = null;
 
   constructor(private basePath: string = SKILL_DIRECTORIES.ROOT) {
     // Resolve ~ to actual home directory
@@ -45,7 +46,7 @@ export class SkillLoader {
     const errors: Array<{ skill_name: string; error: string; file_path: string }> = [];
     const foundSkills: SkillManifest[] = [];
 
-    // Scan each trust level directory
+    // Scan each trust level directory (skill-manifest.json + skill.ts format)
     const directories = [
       { path: SKILL_DIRECTORIES.BUILTIN, trustLevel: TrustLevel.BUILT_IN },
       { path: SKILL_DIRECTORIES.VERIFIED, trustLevel: TrustLevel.VERIFIED },
@@ -65,6 +66,25 @@ export class SkillLoader {
           file_path: path
         });
       }
+    }
+
+    // Scan root-level directories for SKILL.md format (Claude Code native skills)
+    try {
+      const rootSkills = await this.scanRootLevelSkills();
+      // Only add skills not already found via manifest format
+      const existingNames = new Set(foundSkills.map(s => s.name));
+      for (const skill of rootSkills) {
+        if (!existingNames.has(skill.name)) {
+          foundSkills.push(skill);
+        }
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      errors.push({
+        skill_name: 'root_skill_scan',
+        error: `Failed to scan root-level SKILL.md files: ${errorMessage}`,
+        file_path: this.basePath
+      });
     }
 
     // Validate all found skills
@@ -249,8 +269,8 @@ export class SkillLoader {
       issues.push(`Invalid manifest structure: ${errorMessage}`);
     }
 
-    // 2. Security content scanning
-    if (manifest.skill_file_path) {
+    // 2. Security content scanning (skip for SKILL.md — markdown docs, not executable code)
+    if (manifest.skill_file_path && !manifest.skill_file_path.endsWith('SKILL.md')) {
       try {
         const skillContent = await readFile(manifest.skill_file_path, 'utf-8');
         const securityIssues = this.scanForDangerousPatterns(skillContent);
@@ -266,9 +286,11 @@ export class SkillLoader {
     // 3. Trust level validation
     switch (manifest.trust_level) {
       case TrustLevel.BUILT_IN:
-        // System skills must be in built-in directory
-        if (!manifest.skill_file_path?.includes('built-in')) {
-          issues.push('System trust level only allowed for built-in skills');
+        // System skills must be in built-in directory or root-level SKILL.md skills
+        if (manifest.skill_file_path &&
+            !manifest.skill_file_path.includes(`${sep}built-in${sep}`) &&
+            !manifest.manifest_path?.endsWith('SKILL.md')) {
+          issues.push('System trust level only allowed for built-in or root-level skills');
         }
         break;
 
@@ -406,11 +428,209 @@ export class SkillLoader {
   }
 
   /**
+   * Scan root-level skill directories for SKILL.md files (Claude Code native format).
+   * These are loaded as BUILT_IN trust level.
+   *
+   * SKILL.md format: YAML front matter with `name` and `description` fields,
+   * followed by markdown body with skill instructions.
+   */
+  async scanRootLevelSkills(): Promise<SkillManifest[]> {
+    // Return cached results if available (avoids double-scanning during init)
+    if (this.cachedRootSkills !== null) {
+      return this.cachedRootSkills;
+    }
+
+    const skills: SkillManifest[] = [];
+    const skipDirs = new Set(['built-in', 'verified', 'untrusted', '.cache', '.approvals']);
+
+    try {
+      await access(this.basePath);
+      const entries = await readdir(this.basePath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || skipDirs.has(entry.name)) {
+          continue;
+        }
+
+        // Skip symlinked directories to prevent redirection attacks
+        const fullEntryPath = join(this.basePath, entry.name);
+        try {
+          const entryStat = await lstat(fullEntryPath);
+          if (entryStat.isSymbolicLink()) {
+            console.error(`⚠️ Skipping symlinked skill directory: ${entry.name}`);
+            continue;
+          }
+        } catch {
+          continue;
+        }
+
+        const skillDir = fullEntryPath;
+        const skillMdPath = join(skillDir, 'SKILL.md');
+
+        try {
+          // Reject symlinked SKILL.md files (directory symlinks already caught above)
+          const fileLstat = await lstat(skillMdPath);
+          if (fileLstat.isSymbolicLink()) {
+            console.error(`⚠️ Skipping symlinked SKILL.md in ${entry.name}`);
+            continue;
+          }
+
+          // Enforce max file size (1MB) to prevent memory exhaustion
+          const fileStat = fileLstat;
+          if (fileStat.size > 1024 * 1024) {
+            console.error(`⚠️ SKILL.md too large (${fileStat.size} bytes) in ${skillDir}`);
+            continue;
+          }
+          const content = await readFile(skillMdPath, 'utf-8');
+          const frontMatter = this.parseSkillMdFrontMatter(content);
+
+          if (!frontMatter.name || !frontMatter.description) {
+            console.error(`⚠️ SKILL.md missing name/description in ${skillDir}`);
+            continue;
+          }
+
+          // Validate skill name format
+          if (!SKILL_NAME_PATTERN.test(frontMatter.name)) {
+            console.error(`⚠️ Invalid skill name format in ${skillMdPath}: ${frontMatter.name}`);
+            continue;
+          }
+
+          if (frontMatter.name.length > MAX_SKILL_NAME_LENGTH) {
+            console.error(`⚠️ Skill name too long in ${skillMdPath}: ${frontMatter.name}`);
+            continue;
+          }
+
+          // Derive triggers from the skill name (split on hyphens)
+          const triggers = frontMatter.name.split('-').filter(t => t.length > 1);
+
+          // Compute integrity hash from SKILL.md content
+          const integrityHash = createHash('sha256').update(content).digest('hex');
+
+          // Infer category from name patterns
+          const category = this.inferCategory(frontMatter.name);
+
+          const manifest: SkillManifest = {
+            name: frontMatter.name,
+            version: '1.0.0',
+            author: 'Claude Skills Library',
+            created: '2025-01-01T00:00:00Z',
+            updated: new Date().toISOString(),
+            trust_level: TrustLevel.BUILT_IN,
+            integrity_hash: integrityHash,
+            capabilities: [frontMatter.description],
+            required_permissions: [],
+            resource_limits: DEFAULT_RESOURCE_LIMITS[TrustLevel.BUILT_IN],
+            description: frontMatter.description,
+            category,
+            triggers,
+            pairs_with: [],
+            skill_file_path: skillMdPath,
+            manifest_path: skillMdPath,
+          };
+
+          skills.push(manifest);
+        } catch (error) {
+          // SKILL.md doesn't exist or can't be read — skip silently
+          const hasCode = error && typeof error === 'object' && 'code' in error;
+          if (hasCode && (error as any).code === 'ENOENT') continue;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error(`⚠️ Error reading ${skillMdPath}: ${errorMessage}`);
+        }
+      }
+    } catch (error) {
+      const hasCode = error && typeof error === 'object' && 'code' in error;
+      if (hasCode && (error as any).code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    this.cachedRootSkills = skills;
+    return skills;
+  }
+
+  /**
+   * Clear the cached root-level skills (for rescan scenarios).
+   */
+  clearRootSkillsCache(): void {
+    this.cachedRootSkills = null;
+  }
+
+  /**
+   * Parse YAML front matter from a SKILL.md file.
+   * Expected format:
+   * ---
+   * name: skill-name
+   * description: "Skill description"
+   * ---
+   */
+  private parseSkillMdFrontMatter(content: string): { name: string; description: string } {
+    const result = { name: '', description: '' };
+
+    // Match YAML front matter block between --- delimiters
+    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+    if (!fmMatch) return result;
+
+    const frontMatter = fmMatch[1];
+
+    // Parse name field
+    const nameMatch = frontMatter.match(/^name:\s*["']?(.+?)["']?\s*$/m);
+    if (nameMatch) {
+      result.name = nameMatch[1].trim();
+    }
+
+    // Parse description field (may be quoted, single-line only to avoid cross-field capture)
+    const descMatch = frontMatter.match(/^description:\s*["']?(.+?)["']?\s*$/m);
+    if (descMatch) {
+      result.description = descMatch[1].trim();
+      // Truncate if too long
+      if (result.description.length > MAX_DESCRIPTION_LENGTH) {
+        result.description = result.description.slice(0, MAX_DESCRIPTION_LENGTH - 1) + '…';
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Infer skill category from its name.
+   * Falls back to STANDARD if no pattern matches.
+   */
+  private inferCategory(name: string): SkillCategory {
+    // Split on hyphens to get word-level tokens for matching
+    const tokens = new Set(name.toLowerCase().split('-'));
+    const n = name.toLowerCase();
+
+    // Security-related (word-boundary matching to avoid "asterisk" matching "risk")
+    if (tokens.has('security') || tokens.has('compliance') || tokens.has('guardrail') ||
+        tokens.has('audit') || tokens.has('risk') || tokens.has('privacy')) {
+      return SkillCategory.SECURITY;
+    }
+    // Development tools
+    if (n.startsWith('ultra-') || tokens.has('frontend') || tokens.has('backend') ||
+        tokens.has('fullstack') || tokens.has('css') || tokens.has('debugger') ||
+        tokens.has('architect') || n === 'clean-code' || tokens.has('csharp')) {
+      return SkillCategory.DEVELOPMENT;
+    }
+    // Utility / bridge tools
+    if (tokens.has('bridge') || n === 'pdf' || n === 'pptx' ||
+        n === 'docx' || n === 'xlsx' || tokens.has('theme') ||
+        n === 'skill-creator') {
+      return SkillCategory.UTILITY;
+    }
+    // Experimental
+    if (tokens.has('experimental') || n === 'algorithmic-art' || n === 'slack-gif-creator') {
+      return SkillCategory.EXPERIMENTAL;
+    }
+    return SkillCategory.STANDARD;
+  }
+
+  /**
    * Clear caches (for testing or refresh)
    */
   clearCache(): void {
     this.scanCache.clear();
     this.trustCache.clear();
+    this.cachedRootSkills = null;
   }
 
   /**

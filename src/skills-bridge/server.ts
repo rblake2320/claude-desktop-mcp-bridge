@@ -56,6 +56,19 @@ function getSkillCategoryHelper(skill: SkillDefinition): string {
   return 'standard';
 }
 
+/** Truncate a string to max characters, appending ellipsis if truncated. */
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
+const categoryEmoji: Record<string, string> = {
+  development: '⭐',
+  utility: '🏆',
+  standard: '💡',
+  security: '🔒',
+  experimental: '🧪',
+};
+
 // ── Configuration ────────────────────────────────────────────────────────────
 
 const ConfigSchema = z.object({
@@ -343,7 +356,13 @@ const SkillsValidationSchemas = {
       .refine(
         (cat) => ['development', 'utility', 'standard', 'security', 'experimental', 'all'].includes(cat),
         'Invalid skill category'
-      )
+      ),
+    verbose: z.boolean().default(false),
+    group: z.string().max(100).optional()
+      .refine(
+        (g) => !g || /^[a-zA-Z0-9\-_]+$/.test(g),
+        'Group must be a valid skill name'
+      ),
   }),
 
   findSkills: z.object({
@@ -358,7 +377,8 @@ const SkillsValidationSchemas = {
         (query) => !/^[\s\x00-\x1f\x7f-\x9f]*$/.test(query),
         'Query contains only control characters or whitespace'
       )
-      .transform(val => SecurityScanner.scanInput(val).sanitized)
+      .transform(val => SecurityScanner.scanInput(val).sanitized),
+    limit: z.number().int().min(1).max(50).default(5),
   }),
 
   applySkill: z.object({
@@ -404,7 +424,8 @@ const SkillsValidationSchemas = {
         (args) => !args || !PROMPT_INJECTION_PATTERNS.some(pattern => pattern.test(args)),
         'Arguments contain potentially dangerous patterns'
       )
-      .transform(val => val ? SecurityScanner.scanInput(val).sanitized : undefined)
+      .transform(val => val ? SecurityScanner.scanInput(val).sanitized : undefined),
+    verbose: z.boolean().default(false),
   }),
 
   autoSkillMatch: z.object({
@@ -878,7 +899,7 @@ class SkillsBridge {
       // Migrate legacy skills to registry if not already present
       await this.migrateLegacySkills();
 
-      // Scan and load dynamic skills
+      // Scan and load dynamic skills (includes root-level SKILL.md files)
       const scanResult = await this.loader.scanAllSkills();
       console.error(`Skill scan complete: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded, ${scanResult.pending_approval} pending approval`);
 
@@ -888,6 +909,9 @@ class SkillsBridge {
           console.error(`  ${error.skill_name}: ${error.error}`);
         });
       }
+
+      // Register root-level SKILL.md skills into registry for loadDynamicSkills() to pick up
+      await this.registerRootLevelSkills();
 
       // Load validated dynamic skills into the skills map
       await this.loadDynamicSkills();
@@ -973,6 +997,47 @@ class SkillsBridge {
         this.skills.set(skill.name, skill);
       }
       // Untrusted skills remain in registry but aren't auto-loaded
+    }
+  }
+
+  /**
+   * Register root-level SKILL.md skills into the registry.
+   * Uses the loader's scanRootLevelSkills() to find SKILL.md files,
+   * then registers each as a dynamic skill definition in the registry.
+   * Skills already loaded as legacy are skipped.
+   */
+  private async registerRootLevelSkills(): Promise<void> {
+    try {
+      const rootSkills = await this.loader.scanRootLevelSkills();
+      let registered = 0;
+
+      for (const manifest of rootSkills) {
+        // Skip if already loaded as legacy or already in registry
+        if (this.skills.has(manifest.name)) continue;
+        if (this.registry.getSkill(manifest.name)) continue;
+
+        const definition: DynamicSkillDefinition = {
+          name: manifest.name,
+          description: manifest.description,
+          capabilities: manifest.capabilities,
+          category: manifest.category,
+          triggers: manifest.triggers,
+          pairsWith: manifest.pairs_with,
+          manifest,
+          trust_level: TrustLevel.BUILT_IN,
+          loaded_from_path: manifest.skill_file_path,
+          last_loaded: new Date().toISOString()
+        };
+
+        await this.registry.registerSkill(manifest, definition);
+        registered++;
+      }
+
+      if (registered > 0) {
+        console.error(`Registered ${registered} root-level SKILL.md skills`);
+      }
+    } catch (error) {
+      console.error('Failed to register root-level skills:', error);
     }
   }
 
@@ -1210,7 +1275,9 @@ class SkillsBridge {
    * Rescan and reload dynamic skills
    */
   async rescanSkills(): Promise<SkillScanResult> {
+    this.loader.clearRootSkillsCache();
     const scanResult = await this.loader.scanAllSkills();
+    await this.registerRootLevelSkills();
     await this.loadDynamicSkills();
 
     console.error(`Skills rescanned: ${scanResult.found_skills} found, ${scanResult.loaded_skills} loaded`);
@@ -1732,22 +1799,31 @@ const server = new Server(
 const tools: Tool[] = [
   {
     name: 'list_skills',
-    description: 'List all available Claude Code skills with their capabilities',
+    description: 'List available skills. Returns compact catalog by default. Use verbose=true for full descriptions.',
     inputSchema: {
       type: 'object',
       properties: {
         category: {
           type: 'string',
           enum: ['development', 'utility', 'standard', 'security', 'experimental', 'all'],
-          description: 'Filter skills by category (default: all)',
+          description: 'Filter by category (default: all)',
           default: 'all',
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'Include full descriptions and triggers (default: false)',
+          default: false,
+        },
+        group: {
+          type: 'string',
+          description: 'Show skills that pair with this skill name (e.g., "ultra-frontend")',
         },
       },
     },
   },
   {
     name: 'find_skills',
-    description: 'Find skills that match specific keywords or triggers',
+    description: 'Find skills matching keywords. Returns compact results with exact-match priority.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1755,13 +1831,18 @@ const tools: Tool[] = [
           type: 'string',
           description: 'Keywords to search for (e.g., "react", "debugging", "database")',
         },
+        limit: {
+          type: 'number',
+          description: 'Max results to return (default: 5)',
+          default: 5,
+        },
       },
       required: ['query'],
     },
   },
   {
     name: 'apply_skill',
-    description: 'Apply a specific skill to your task (like invoking Claude Code skills)',
+    description: 'Activate a skill for your task. Returns compact confirmation by default.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1777,13 +1858,18 @@ const tools: Tool[] = [
           type: 'string',
           description: 'Additional arguments or context for the skill (optional)',
         },
+        verbose: {
+          type: 'boolean',
+          description: 'Include detailed guidance (default: false)',
+          default: false,
+        },
       },
       required: ['skillName', 'input'],
     },
   },
   {
     name: 'auto_skill_match',
-    description: 'Automatically find and apply the best skill for your task',
+    description: 'Find the best skill for your task. Returns match + score without auto-applying.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1880,76 +1966,125 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'list_skills': {
-        // Validate input with enhanced security schema
         const validatedArgs = SkillsValidationSchemas.listSkills.parse(args);
-        const { category } = validatedArgs;
+        const { category, verbose, group } = validatedArgs;
 
-        // Log tool execution start
         await SkillsSecurityLogger.logSecurityEvent({
           type: 'TOOL_EXECUTION',
           severity: 'LOW',
           operation: 'list_skills',
-          reason: `Starting skill listing operation for category: ${category}`
+          reason: `Listing skills (category=${category}, verbose=${verbose}, group=${group || 'none'})`
         });
 
         const availableSkills = skills.getAvailableSkills();
 
+        // ── Group mode: show a skill + its pairsWith bundle ──
+        if (group) {
+          const anchor = availableSkills.find(s => s.name === group);
+          if (!anchor) {
+            return { content: [{ type: 'text', text: `Skill "${group}" not found. Use list_skills() to see all.` }] };
+          }
+          const isUniversal = anchor.pairsWith.some(p => p.includes('all skills'));
+          let groupSkills: typeof availableSkills;
+          if (isUniversal) {
+            // Cross-cutting skill — show all available skills
+            groupSkills = availableSkills;
+          } else {
+            const pairNames = new Set(anchor.pairsWith);
+            groupSkills = [anchor, ...availableSkills.filter(s => s.name !== anchor.name && pairNames.has(s.name))];
+          }
+          const lines = groupSkills.map(s => {
+            const cat = getSkillCategoryHelper(s);
+            return `${categoryEmoji[cat] || '💡'} **${s.name}** — ${truncate(s.description, 80)}`;
+          });
+          const count = groupSkills.length;
+          const label = isUniversal ? `${group} (pairs with all)` : `${group} group`;
+          const result = `**${label}** (${count} skill${count !== 1 ? 's' : ''}):\n${lines.join('\n')}`;
+          await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Group: ${groupSkills.length} skills`);
+          return { content: [{ type: 'text', text: result }] };
+        }
+
         const filteredSkills = category === 'all'
           ? availableSkills
-          : availableSkills.filter(skill => skill.category === category);
+          : availableSkills.filter(skill => getSkillCategoryHelper(skill) === category);
 
-        const skillsList = filteredSkills.map((skill) => {
-          const categoryEmoji: Record<string, string> = { development: '⭐', utility: '🏆', standard: '💡', security: '🔒', experimental: '🧪' };
-          const category = getSkillCategoryHelper(skill);
-          return `${categoryEmoji[category] || '💡'} **${skill.name}** (${category})\n   ${skill.description}\n   Triggers: ${skill.triggers.slice(0, 5).join(', ')}`;
-        }).join('\n\n');
+        let summary: string;
 
-        const summary = `**Available Claude Code Skills (${filteredSkills.length} total)**\n\n${skillsList}\n\n**Usage:** Use \`apply_skill\` to activate a specific skill, or \`auto_skill_match\` to find the best skill automatically.`;
+        if (verbose) {
+          // Full descriptions + triggers (backward-compatible verbose mode)
+          const skillsList = filteredSkills.map((skill) => {
+            const cat = getSkillCategoryHelper(skill);
+            return `${categoryEmoji[cat] || '💡'} **${skill.name}** (${cat})\n   ${skill.description}\n   Triggers: ${skill.triggers.slice(0, 5).join(', ')}`;
+          }).join('\n\n');
+          summary = `**Available Skills (${filteredSkills.length})**\n\n${skillsList}\n\nUse apply_skill(name, task) to activate.`;
+        } else {
+          // Compact catalog: group by category, names only
+          const byCat: Record<string, string[]> = {};
+          for (const skill of filteredSkills) {
+            const cat = getSkillCategoryHelper(skill);
+            if (!byCat[cat]) byCat[cat] = [];
+            byCat[cat].push(skill.name);
+          }
+          const catLines = Object.entries(byCat).map(([cat, names]) =>
+            `${categoryEmoji[cat] || '💡'} ${names.join(' | ')}`
+          );
+          summary = `**Skills (${filteredSkills.length})**\n${catLines.join('\n')}\n\nUse apply_skill(name, task) to activate. list_skills(verbose=true) for details.`;
+        }
 
-        // Log successful tool execution
         await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Returned ${filteredSkills.length} skills`);
-
         return { content: [{ type: 'text', text: summary }] };
       }
 
       case 'find_skills': {
-        // Validate and sanitize input with enhanced security schema
         const validatedArgs = SkillsValidationSchemas.findSkills.parse(args);
-        const { query } = validatedArgs;
+        const { query, limit } = validatedArgs;
 
-        // Log tool execution start with security context
         await SkillsSecurityLogger.logSecurityEvent({
           type: 'TOOL_EXECUTION',
           severity: 'LOW',
           operation: 'find_skills',
-          reason: `Starting skill search for query: ${query.substring(0, 100)}`
+          reason: `Skill search: ${query.substring(0, 100)}`
         });
 
-        const matchingSkills = skills.findMatchingSkills(query);
+        const availableSkills = skills.getAvailableSkills();
+
+        // ── Exact match short-circuit ──
+        const queryLower = query.toLowerCase();
+        const exactMatch = availableSkills.find(s =>
+          s.name.toLowerCase() === queryLower ||
+          s.name.toLowerCase() === `ultra-${queryLower}` ||
+          s.triggers.some(t => t.toLowerCase() === queryLower)
+        );
+        if (exactMatch) {
+          const cat = getSkillCategoryHelper(exactMatch);
+          const result = `${categoryEmoji[cat] || '💡'} **${exactMatch.name}** — ${truncate(exactMatch.description, 80)}\nUse: apply_skill("${exactMatch.name}", "your task")`;
+          await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Exact match: ${exactMatch.name}`);
+          return { content: [{ type: 'text', text: result }] };
+        }
+
+        // ── Fuzzy search with limit ──
+        const matchingSkills = skills.findMatchingSkills(query).slice(0, limit);
 
         if (matchingSkills.length === 0) {
           await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', 'No skills found');
-          return { content: [{ type: 'text', text: `No skills found matching "${query}". Use \`list_skills\` to see all available skills.` }] };
+          return { content: [{ type: 'text', text: `No skills found for "${query}". Use list_skills() to browse.` }] };
         }
 
-        const skillsList = matchingSkills.map((skill) => {
-          const categoryEmoji: Record<string, string> = { development: '⭐', utility: '🏆', standard: '💡', security: '🔒', experimental: '🧪' };
-          const category = getSkillCategoryHelper(skill);
-          return `${categoryEmoji[category] || '💡'} **${skill.name}** (${category})\n   ${skill.description}`;
-        }).join('\n\n');
+        const lines = matchingSkills.map(skill => {
+          const cat = getSkillCategoryHelper(skill);
+          return `${categoryEmoji[cat] || '💡'} **${skill.name}** — ${truncate(skill.description, 80)}`;
+        });
 
-        const result = `**Skills matching "${query}" (${matchingSkills.length} found)**\n\n${skillsList}\n\n**Next:** Use \`apply_skill\` with one of these skill names to activate it.`;
+        const result = `**"${query}"** (${matchingSkills.length} match${matchingSkills.length > 1 ? 'es' : ''}):\n${lines.join('\n')}\n\nUse apply_skill(name, task) to activate.`;
 
-        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Found ${matchingSkills.length} matching skills`);
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Found ${matchingSkills.length} skills`);
         return { content: [{ type: 'text', text: result }] };
       }
 
       case 'apply_skill': {
-        // Validate and sanitize input with enhanced security schema
         const validatedArgs = SkillsValidationSchemas.applySkill.parse(args);
-        const { skillName, input, args: skillArgs } = validatedArgs;
+        const { skillName, input, args: skillArgs, verbose: applyVerbose } = validatedArgs;
 
-        // Enhanced skill name validation
         const skillValidation = SkillSecurityValidator.validateSkillName(skillName);
         if (!skillValidation.valid) {
           await SkillsSecurityLogger.logSecurityEvent({
@@ -1962,7 +2097,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error(skillValidation.reason || 'Invalid skill');
         }
 
-        // Enhanced input validation
         const inputValidation = await SkillSecurityValidator.validateSkillInput(skillName, input);
         if (!inputValidation.valid) {
           await SkillsSecurityLogger.logSecurityEvent({
@@ -1975,44 +2109,54 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error(inputValidation.reason || 'Invalid input');
         }
 
-        // Log skill application start
         await SkillsSecurityLogger.logSecurityEvent({
           type: 'SKILL_ACCESS',
           severity: 'LOW',
           operation: 'apply_skill',
           skillName,
-          reason: `Applying skill ${skillName} with validated input`
+          reason: `Applying skill ${skillName} (verbose=${applyVerbose})`
         });
 
-        const result = await skills.applySkill(skillName, input, skillArgs);
-        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Applied skill: ${skillName}`);
+        // Always run applySkill to record usage + generate guidance
+        const fullResult = await skills.applySkill(skillName, input, skillArgs);
+
+        let result: string;
+        if (applyVerbose) {
+          result = fullResult;
+        } else {
+          // Compact activation response — discard verbose guidance
+          const skillDef = skills.getAvailableSkills().find(s => s.name === skillName);
+          const pairs = skillDef?.pairsWith?.filter(p => !p.includes('all skills')) || [];
+          result = `**${skillName.toUpperCase()}** activated for: "${truncate(input, 60)}"`;
+          if (pairs.length > 0) {
+            result += `\nPairs with: ${pairs.join(', ')}`;
+          }
+        }
+
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Applied: ${skillName}`);
         return { content: [{ type: 'text', text: result }] };
       }
 
       case 'auto_skill_match': {
-        // Validate and sanitize input with enhanced security schema
         const validatedArgs = SkillsValidationSchemas.autoSkillMatch.parse(args);
         const { request } = validatedArgs;
 
-        // Log auto-match attempt with security context
         await SkillsSecurityLogger.logSecurityEvent({
           type: 'TOOL_EXECUTION',
           severity: 'LOW',
           operation: 'auto_skill_match',
-          reason: `Starting auto skill match for request: ${request.substring(0, 100)}`
+          reason: `Auto match: ${request.substring(0, 100)}`
         });
 
         const scoredMatches = skills.findMatchingSkillsWithScores(request);
 
         if (scoredMatches.length === 0) {
-          await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', 'No matching skills found');
-          return { content: [{ type: 'text', text: `No skills automatically matched for "${request}". Try using \`find_skills\` with specific keywords, or \`list_skills\` to browse all available skills.` }] };
+          await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', 'No matching skills');
+          return { content: [{ type: 'text', text: `No match for "${truncate(request, 60)}". Try find_skills() or list_skills().` }] };
         }
 
-        // Apply the best matching skill with enhanced validation
         const bestMatch = scoredMatches[0];
 
-        // Validate skill selection
         const skillValidation = SkillSecurityValidator.validateSkillName(bestMatch.skill.name);
         if (!skillValidation.valid) {
           await SkillsSecurityLogger.logSecurityEvent({
@@ -2025,27 +2169,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error('Auto-matched skill failed validation');
         }
 
-        // Log skill application
-        await SkillsSecurityLogger.logSecurityEvent({
-          type: 'SKILL_ACCESS',
-          severity: 'LOW',
-          operation: 'auto_skill_match_apply',
-          skillName: bestMatch.skill.name,
-          reason: `Auto-applying best matching skill: ${bestMatch.skill.name} (score: ${bestMatch.score})`
-        });
-
-        const result = await skills.applySkill(bestMatch.skill.name, request);
-
-        let response = `**AUTO-MATCHED SKILL: ${bestMatch.skill.name.toUpperCase()}** (score: ${bestMatch.score})\n\n`;
-
+        // Compact: return match info without auto-applying
+        let response = `Matched: **${bestMatch.skill.name}** (score: ${bestMatch.score})`;
         if (scoredMatches.length > 1) {
           const runners = scoredMatches.slice(1, 4).map(s => `${s.skill.name} (${s.score})`).join(', ');
-          response += `*Also considered: ${runners}*\n\n`;
+          response += `\nAlso: ${runners}`;
         }
+        response += `\nUse apply_skill("${bestMatch.skill.name}", "your task") to activate.`;
 
-        response += result;
-
-        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Auto-matched and applied skill: ${bestMatch.skill.name} (score: ${bestMatch.score})`);
+        await SkillsSecurityLogger.logToolExecution(name, validatedArgs, 'SUCCESS', `Matched: ${bestMatch.skill.name} (${bestMatch.score})`);
         return { content: [{ type: 'text', text: response }] };
       }
 

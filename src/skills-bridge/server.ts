@@ -287,9 +287,9 @@ class SkillSecurityValidator {
   /**
    * Validate skill name for security issues
    */
-  static validateSkillName(skillName: string): { valid: boolean; reason?: string } {
-    // Check against available skills to prevent injection
-    const availableSkills = SKILL_DEFINITIONS.map(s => s.name);
+  static validateSkillName(skillName: string, knownSkillNames: string[] = []): { valid: boolean; reason?: string } {
+    // Check against available skills (legacy + dynamically loaded) to prevent injection
+    const availableSkills = [...SKILL_DEFINITIONS.map(s => s.name), ...knownSkillNames];
     if (!availableSkills.includes(skillName)) {
       SkillsSecurityLogger.logSecurityEvent({
         type: 'SKILL_BLOCKED',
@@ -2085,7 +2085,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const validatedArgs = SkillsValidationSchemas.applySkill.parse(args);
         const { skillName, input, args: skillArgs, verbose: applyVerbose } = validatedArgs;
 
-        const skillValidation = SkillSecurityValidator.validateSkillName(skillName);
+        const skillValidation = SkillSecurityValidator.validateSkillName(skillName, skills.getAvailableSkills().map(s => s.name));
         if (!skillValidation.valid) {
           await SkillsSecurityLogger.logSecurityEvent({
             type: 'SKILL_BLOCKED',
@@ -2157,7 +2157,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const bestMatch = scoredMatches[0];
 
-        const skillValidation = SkillSecurityValidator.validateSkillName(bestMatch.skill.name);
+        const skillValidation = SkillSecurityValidator.validateSkillName(bestMatch.skill.name, skills.getAvailableSkills().map(s => s.name));
         if (!skillValidation.valid) {
           await SkillsSecurityLogger.logSecurityEvent({
             type: 'SKILL_BLOCKED',
@@ -2348,7 +2348,7 @@ ${pendingApprovals.map((req, i) => `**${i + 1}. ${req.skill_name}**
         }
 
         // Validate skill name
-        const execSkillValidation = SkillSecurityValidator.validateSkillName(executeArgs.skillName);
+        const execSkillValidation = SkillSecurityValidator.validateSkillName(executeArgs.skillName, skills.getAvailableSkills().map(s => s.name));
         if (!execSkillValidation.valid) {
           throw new Error(execSkillValidation.reason || 'Invalid skill');
         }

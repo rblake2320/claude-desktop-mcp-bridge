@@ -1,0 +1,27 @@
+{
+  "caseId": "d98c9bcc2173f44a668f8966cce6aee0",
+  "idempotencyKey": "d98c9bcc2173f44a668f8966cce6aee01b3a7da77df9b573c39f82e74392b409",
+  "createdAt": "2026-02-12T22:01:02.206Z",
+  "repo": {
+    "path": "C:\\Users\\techai\\claude-desktop-mcp-bridge",
+    "commitRange": "HEAD~1..HEAD"
+  },
+  "evidenceHash": "e712c47994c34a6e5f0bcb9f19334cfd5852f753932bbc1e68cb0e128cf10306",
+  "payloadHash": "4795c69914551bd3931fe94edb7c6dc4203079832dd8d8d1cc7094f4f61ff365",
+  "secretScanResult": {
+    "clean": false,
+    "secretsFound": 1,
+    "redactionsApplied": 1,
+    "gitleaksRan": true,
+    "gitleaksFindings": 0,
+    "gitleaksSummary": {
+      "count": 0,
+      "rules": [],
+      "files": [],
+      "fingerprints": [],
+      "allowlistedCount": 0,
+      "unallowlistedCount": 0
+    }
+  },
+  "reason": "blocked_due_to_secrets"
+}

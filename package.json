@@ -1,6 +1,6 @@
 {
   "name": "claude-desktop-mcp-bridge",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "MCP bridge to bring Claude Code capabilities to Claude Desktop",
   "main": "dist/index.js",
   "type": "module",
@@ -20,7 +20,9 @@
     "start:all": "concurrently \"npm:start:filesystem\" \"npm:start:shell\" \"npm:start:skills\"",
     "skill:check": "node scripts/skill-doctor.js",
     "skill:test-doctor": "node scripts/test-skill-doctor.js",
-    "help": "node scripts/help.js"
+    "help": "node scripts/help.js",
+    "test:pii": "node scripts/test-pii-unit.mjs",
+    "test:e2e": "node scripts/test-fixture-e2e.mjs"
   },
   "keywords": [
     "mcp",

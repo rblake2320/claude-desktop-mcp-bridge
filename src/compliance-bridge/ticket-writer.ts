@@ -530,6 +530,7 @@ const LABEL_COLORS: Record<string, string> = {
   'scanner:gitleaks': '5319e7',
   'scanner:npm_audit': '0052cc',
   'scanner:checkov': '006b75',
+  'scanner:pii': 'c2185b',
   'compliance-navigator': '1d76db',
 };
 

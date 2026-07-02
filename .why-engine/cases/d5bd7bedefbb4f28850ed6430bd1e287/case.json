@@ -1,0 +1,44 @@
+{
+  "caseId": "d5bd7bedefbb4f28850ed6430bd1e287",
+  "idempotencyKey": "d5bd7bedefbb4f28850ed6430bd1e287d69a17854b74f6df8fce012ec396ddb9",
+  "createdAt": "2026-02-12T22:01:11.749Z",
+  "repoPath": "C:\\Users\\techai\\claude-desktop-mcp-bridge",
+  "evidenceId": "56f57664ffaaadcf543cc00a",
+  "title": "Clean publish test",
+  "rootCause": "Test case",
+  "whyNotCaught": "Test",
+  "whyFixWorked": "Test",
+  "preventNextTime": "Test",
+  "evidence": {
+    "commitRange": "HEAD~1..HEAD",
+    "diffSummary": "CLAUDE.md                                |  4 ++--\n scripts/test-fixture-e2e.mjs             | 25 +++++++++++++++++++++++++\n src/compliance-bridge/coverage-shared.ts |  7 ++++++-\n src/compliance-bridge/hipaa-map.ts       | 24 +++++++++++++++++++++++-\n 4 files changed, 56 insertions(+), 4 deletions(-)",
+    "commitMessages": [
+      "v0.9.0 pre-push hardening: scannable-only denominator, defensive coverage filter, negative assertions"
+    ],
+    "fileList": [
+      "CLAUDE.md",
+      "scripts/test-fixture-e2e.mjs",
+      "src/compliance-bridge/coverage-shared.ts",
+      "src/compliance-bridge/hipaa-map.ts"
+    ]
+  },
+  "tags": [],
+  "sensitivity": "internal",
+  "secretScanResult": {
+    "clean": true,
+    "secretsFound": 0,
+    "redactionsApplied": 0,
+    "findings": [],
+    "gitleaksRan": true,
+    "gitleaksFindings": 0,
+    "gitleaksSummary": {
+      "count": 0,
+      "rules": [],
+      "files": [],
+      "fingerprints": [],
+      "allowlistedCount": 0,
+      "unallowlistedCount": 0
+    }
+  },
+  "links": {}
+}

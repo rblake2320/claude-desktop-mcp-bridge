@@ -2,14 +2,14 @@
  * Compliance Navigator - MCP Server
  *
  * Standalone MCP server with 9 tools + MCP resource handlers:
- *   1. compliance.scan_repo              - Run gitleaks + npm audit + checkov, normalize, map SOC2, compute ROI
+ *   1. compliance.scan_repo              - Run gitleaks + npm audit + checkov + built-in PII detector, normalize, map SOC2, compute ROI
  *   2. compliance.generate_audit_packet  - Write structured audit-support directory
  *   3. compliance.plan_remediation       - Prioritized remediation plan
  *   4. compliance.create_tickets         - Create GitHub Issues or Jira tickets from findings
  *   5. compliance.approve_ticket_plan    - Approve a ticket creation plan
  *   6. compliance.verify_audit_chain     - Verify hash chain integrity of audit log
  *   7. compliance.open_dashboard         - Open interactive compliance dashboard (returns resource URI)
- *   8. compliance.create_demo_fixture    - Generate a demo repo with intentional findings for all 3 scanners
+ *   8. compliance.create_demo_fixture    - Generate a demo repo with intentional findings for all 4 scanners
  *   9. compliance.export_audit_packet    - ZIP export of audit packet with SHA-256 integrity hash
  *
  * Resources:
@@ -42,6 +42,7 @@ import { getToolRisk } from './policy.js';
 import { assertAllowedCommand, COMPLIANCE_COMMAND_ALLOWLIST } from '../shared/command-allowlist.js';
 import { assertCompliancePath, validateRepoPath } from '../shared/path-policy.js';
 import { AuditChain, type VerifyResult } from '../shared/audit-chain.js';
+import { scanRepoForPII, statsMessage } from './pii-scanner.js';
 import { normalizeGitleaks } from './normalizers/gitleaks.js';
 import { normalizeNpmAudit } from './normalizers/npm-audit.js';
 import { normalizeCheckov } from './normalizers/checkov.js';
@@ -71,7 +72,7 @@ import type {
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const SERVER_NAME = 'compliance-navigator';
-const SERVER_VERSION = '0.9.0';
+const SERVER_VERSION = '0.10.0';
 const isWindows = platform() === 'win32';
 
 const SEVERITY_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
@@ -264,18 +265,30 @@ function isScannerMissing(result: SpawnResult): boolean {
 }
 
 function makeMissingFinding(scanner: ScannerId, label: string): NormalizedFinding {
+  const purpose: Record<ScannerId, string> = {
+    gitleaks: 'secret detection',
+    npm_audit: 'dependency vulnerability scanning',
+    checkov: 'IaC misconfiguration scanning',
+    pii: 'PII/PHI detection',
+  };
+  const install: Record<ScannerId, string> = {
+    gitleaks: 'Install gitleaks: https://github.com/gitleaks/gitleaks#installing',
+    npm_audit: 'npm audit is built into Node.js - ensure Node.js is installed.',
+    checkov: 'Install checkov: pip install checkov',
+    pii: 'The PII detector is built into Compliance Navigator; check the pii scanner status message for the error.',
+  };
+  // The pii scanner is in-process — it can error, but it is never "not installed"
+  const description = scanner === 'pii'
+    ? 'The built-in PII detector failed to run. See the pii scanner status message for details.'
+    : `The ${label} scanner is not installed on this system. Install it to enable ${purpose[scanner]}.`;
   return {
     id: `missing-${scanner}`,
     scanner,
     severity: 'info',
     title: `Scanner unavailable: ${label}`,
-    description: `The ${label} scanner is not installed on this system. Install it to enable ${scanner === 'gitleaks' ? 'secret detection' : scanner === 'npm_audit' ? 'dependency vulnerability scanning' : 'IaC misconfiguration scanning'}.`,
+    description,
     evidence: { kind: 'scanner_native', ref: 'N/A' },
-    remediation: scanner === 'gitleaks'
-      ? 'Install gitleaks: https://github.com/gitleaks/gitleaks#installing'
-      : scanner === 'checkov'
-      ? 'Install checkov: pip install checkov'
-      : 'npm audit is built into Node.js - ensure Node.js is installed.',
+    remediation: install[scanner],
     tags: ['scanner-missing', scanner],
   };
 }
@@ -307,6 +320,7 @@ function buildManifest(
     gitleaks: null,
     npm_audit: null,
     checkov: null,
+    pii: null,
   };
   for (const s of scannerStatuses) {
     versions[s.scanner] = s.version ?? null;
@@ -356,7 +370,7 @@ function buildManifest(
 const tools: Tool[] = [
   {
     name: 'compliance.scan_repo',
-    description: 'Scan a repository for security findings using gitleaks (secrets), npm audit (dependencies), and checkov (IaC). Maps findings to SOC2 or HIPAA controls and estimates ROI.',
+    description: 'Scan a repository for security findings using gitleaks (secrets), npm audit (dependencies), checkov (IaC), and the built-in PII/PHI detector (SSNs, payment cards, emails, phone/DOB/MRN — values are redacted in all outputs). Maps findings to SOC2 or HIPAA controls and estimates ROI.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -452,7 +466,7 @@ const tools: Tool[] = [
   },
   {
     name: 'compliance.create_demo_fixture',
-    description: 'Create a demo repository with intentional compliance findings for all 3 scanners (gitleaks, npm audit, checkov). Use this to test the full workflow end-to-end without touching real code. All secrets are fake test values. All IaC configs are marked DO-NOT-DEPLOY.',
+    description: 'Create a demo repository with intentional compliance findings for all 4 scanners (gitleaks, npm audit, checkov, built-in PII detector). Use this to test the full workflow end-to-end without touching real code. All secrets and PII are fake test values. All IaC configs are marked DO-NOT-DEPLOY.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -734,6 +748,55 @@ async function runCheckov(
   };
 }
 
+/**
+ * Built-in PII/PHI detector. Runs in-process — no external binary, no shell.
+ * Never "missing"; a thrown error surfaces as scanner status 'error'.
+ * A partial scan (deadline/file-limit) is reported as status 'error' with the
+ * partial counts in the message — it is never silently presented as complete.
+ */
+async function runPiiScan(
+  repoPath: string, outputDir: string, timeoutMs: number
+): Promise<ScannerRunResult> {
+  const outputPath = resolve(outputDir, 'pii.json');
+  const startedAt = new Date().toISOString();
+  const start = Date.now();
+
+  const { findings, stats } = scanRepoForPII(repoPath, outputPath, {
+    deadlineMs: start + timeoutMs,
+  });
+
+  const transcript: ToolRunTranscript = {
+    tool: 'pii',
+    command: 'builtin:pii-scanner (in-process, no shell execution)',
+    cwd: repoPath,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    exitCode: 0,
+    durationMs: Date.now() - start,
+    stdoutPath: outputPath,
+    stderrPath: resolve(outputDir, 'pii-stderr.txt'),
+  };
+
+  // Evidence artifact: stats + findings. Findings are already redacted —
+  // raw matched values never leave the scanned files.
+  assertCompliancePath(repoPath, outputPath);
+  assertCompliancePath(repoPath, transcript.stderrPath);
+  writeFileSync(outputPath, JSON.stringify({ stats, findings }, null, 2), 'utf-8');
+  writeFileSync(transcript.stderrPath, statsMessage(stats), 'utf-8');
+
+  const partial = stats.deadlineExceeded || stats.fileLimitReached;
+  return {
+    findings,
+    transcript,
+    status: {
+      scanner: 'pii',
+      status: partial ? 'error' : 'ok',
+      version: `builtin@${SERVER_VERSION}`,
+      message: statsMessage(stats),
+    },
+  };
+}
+
 // â”€â”€ Tool Handlers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
@@ -762,7 +825,7 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
 
   auditChain.append('tool_start', 'compliance.scan_repo', { runId, repoPath });
 
-  // Run all 3 scanners concurrently, gracefully handling errors
+  // Run all 4 scanners concurrently, gracefully handling errors
   const defaultResult = (scanner: ScannerId, err: Error): ScannerRunResult => {
     console.error(`[${scanner}] Scanner error: ${err.message}`);
     return {
@@ -772,13 +835,15 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
     };
   };
 
-  const [gitleaksResult, npmResult, checkovResult] = await Promise.all([
+  const [gitleaksResult, npmResult, checkovResult, piiResult] = await Promise.all([
     runGitleaks(repoPath, evidenceDir, timeoutMs)
       .catch(err => defaultResult('gitleaks', err as Error)),
     runNpmAudit(repoPath, evidenceDir, timeoutMs)
       .catch(err => defaultResult('npm_audit', err as Error)),
     runCheckov(repoPath, evidenceDir, timeoutMs)
       .catch(err => defaultResult('checkov', err as Error)),
+    runPiiScan(repoPath, evidenceDir, timeoutMs)
+      .catch(err => defaultResult('pii', err as Error)),
   ]);
 
   // Collect scanner statuses
@@ -786,6 +851,7 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
     gitleaksResult.status,
     npmResult.status,
     checkovResult.status,
+    piiResult.status,
   ];
 
   // Merge all findings (excluding scanner-missing meta-findings from real counts)
@@ -793,12 +859,14 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
     ...gitleaksResult.findings,
     ...npmResult.findings,
     ...checkovResult.findings,
+    ...piiResult.findings,
   ];
 
   const transcripts: ToolRunTranscript[] = [
     gitleaksResult.transcript,
     npmResult.transcript,
     checkovResult.transcript,
+    piiResult.transcript,
   ].filter((t): t is ToolRunTranscript => t !== null);
 
   // Only count real findings (not scanner-missing meta-findings) for mapping and ROI
@@ -827,7 +895,7 @@ async function handleScanRepo(args: unknown): Promise<ScanRepoResponse> {
     critical: 0, high: 0, medium: 0, low: 0, info: 0,
   };
   const countsByScanner: Record<ScannerId, number> = {
-    gitleaks: 0, npm_audit: 0, checkov: 0,
+    gitleaks: 0, npm_audit: 0, checkov: 0, pii: 0,
   };
   for (const f of realFindings) {
     countsBySeverity[f.severity]++;

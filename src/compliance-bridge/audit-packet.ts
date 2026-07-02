@@ -93,6 +93,9 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   if (scan.countsByScanner.checkov > 0) {
     themes.push({ theme: 'Infrastructure Misconfigurations', count: scan.countsByScanner.checkov, description: 'IaC resources that deviate from security best practices' });
   }
+  if ((scan.countsByScanner.pii ?? 0) > 0) {
+    themes.push({ theme: 'PII/PHI Exposure', count: scan.countsByScanner.pii, description: 'Personal or health-related identifiers detected in repository files (values redacted)' });
+  }
   if (themes.length === 0) {
     lines.push('No risk themes identified from scanner findings.');
   } else {
@@ -172,10 +175,12 @@ function generateIndexMd(scan: ScanRepoResponse): string {
   if (topFindings.length === 0) {
     lines.push('No findings detected.');
   } else {
+    // Titles/paths derive from scanned repo content — escape Markdown-active chars
+    const mdCell = (s: string) => s.replace(/\|/g, '\\|').replace(/[`<>]/g, '');
     lines.push(`| # | Severity | Scanner | Title | File |`);
     lines.push(`|---|----------|---------|-------|------|`);
     topFindings.forEach((f, i) => {
-      lines.push(`| ${i + 1} | ${severityBadge(f.severity)} | ${f.scanner} | ${f.title} | ${f.file ?? '-'} |`);
+      lines.push(`| ${i + 1} | ${severityBadge(f.severity)} | ${f.scanner} | ${mdCell(f.title)} | ${mdCell(f.file ?? '-')} |`);
     });
   }
   lines.push('');

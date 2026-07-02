@@ -1,0 +1,54 @@
+{
+  "evidenceId": "5a80f199836ede1158ab382d",
+  "repoPath": "C:\\Users\\techai\\claude-desktop-mcp-bridge",
+  "collectedAt": "2026-02-12T21:59:27.907Z",
+  "commitRange": "HEAD~1..HEAD",
+  "diffSummary": "CLAUDE.md                                |  4 ++--\n scripts/test-fixture-e2e.mjs             | 25 +++++++++++++++++++++++++\n src/compliance-bridge/coverage-shared.ts |  7 ++++++-\n src/compliance-bridge/hipaa-map.ts       | 24 +++++++++++++++++++++++-\n 4 files changed, 56 insertions(+), 4 deletions(-)",
+  "diffStat": "4 files changed, 56 insertions(+), 4 deletions(-)",
+  "filesChanged": 4,
+  "insertions": 56,
+  "deletions": 4,
+  "fileList": [
+    "CLAUDE.md",
+    "scripts/test-fixture-e2e.mjs",
+    "src/compliance-bridge/coverage-shared.ts",
+    "src/compliance-bridge/hipaa-map.ts"
+  ],
+  "commitMessages": [
+    {
+      "hash": "5ab75c580148e1b8b0c6403f6ae7a4815a389e36",
+      "author": "UltraSecure Developer",
+      "date": "2026-02-12 14:04:20 -0600",
+      "message": "v0.9.0 pre-push hardening: scannable-only denominator, defensive coverage filter, negative assertions",
+      "filesChanged": 4,
+      "insertions": 56,
+      "deletions": 4
+    }
+  ],
+  "testOutput": "AWS_KEY=[REDACTED:aws-access-key]",
+  "testOutputHash": "72c634f5ebfd982972f6a9854ad0535cc6d6efa70a44f5e0d63657e872c1c7c6",
+  "testOutputTruncated": false,
+  "environment": {
+    "os": "win32 x64",
+    "nodeVersion": "v24.3.0",
+    "gitVersion": "git version 2.50.0.windows.2",
+    "branch": "master",
+    "repoCommitHash": "5ab75c580148e1b8b0c6403f6ae7a4815a389e36",
+    "repoRemoteUrl": "https://github.com/rblake2320/claude-desktop-mcp-bridge.git"
+  },
+  "secretScanResult": {
+    "clean": false,
+    "secretsFound": 1,
+    "redactionsApplied": 1,
+    "findings": [
+      {
+        "ruleId": "aws-access-key",
+        "description": "AWS access key ID",
+        "location": "$.testOutput",
+        "redacted": true
+      }
+    ],
+    "gitleaksRan": true,
+    "gitleaksFindings": 0
+  }
+}

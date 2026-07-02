@@ -156,6 +156,7 @@ export const SOC2_CONTROLS: SOC2Control[] = [
     description: 'The entity identifies and maintains confidential information.',
     scannerMappings: [
       { scanner: 'gitleaks', confidence: 0.9 },
+      { scanner: 'pii', confidence: 0.9 },
     ],
   },
   {
@@ -163,6 +164,7 @@ export const SOC2_CONTROLS: SOC2Control[] = [
     description: 'The entity disposes of confidential information per objectives.',
     scannerMappings: [
       { scanner: 'gitleaks', confidence: 0.5 },
+      { scanner: 'pii', confidence: 0.6 },
     ],
   },
 
@@ -181,6 +183,7 @@ export const SOC2_CONTROLS: SOC2Control[] = [
     description: 'Personal information is retained and disposed of per policies.',
     scannerMappings: [
       { scanner: 'gitleaks', confidence: 0.5 },
+      { scanner: 'pii', confidence: 0.8 },
     ],
   },
 
@@ -209,6 +212,7 @@ const SCANNER_RATIONALE: Record<ScannerId, string> = {
   gitleaks: 'Secrets in code increase unauthorized access risk and incident likelihood.',
   npm_audit: 'Vulnerable dependencies increase likelihood/impact of security events.',
   checkov: 'Misconfigurations weaken logical access controls and monitoring.',
+  pii: 'Personal data in source control indicates confidentiality and privacy control gaps.',
 };
 
 // ── Mapping Logic ────────────────────────────────────────────────

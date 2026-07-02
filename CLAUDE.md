@@ -1,6 +1,6 @@
 # SYNC CONTEXT — DO NOT LOSE THIS (project is already far along)
 
-Repo: claude-desktop-mcp-bridge (public), current releases include v0.9.0.
+Repo: claude-desktop-mcp-bridge (public), current releases include v0.10.0.
 
 ## WHAT IS ALREADY SHIPPED (do NOT re-implement; build on it)
 
@@ -8,7 +8,7 @@ Compliance Navigator is a standalone MCP server: `src/compliance-bridge/server.t
 
 ## TOOL SURFACE (9 tools exist now)
 
-1. **compliance.scan_repo** — Runs gitleaks + npm audit + checkov, normalizes findings, produces manifest. Supports `framework: 'soc2' | 'hipaa'` (default soc2). SOC2: "Scanner Reach" on 20 controls. HIPAA: dual metrics — technical reach on 164.312 (12 controls) + 164.308 admin placeholders (7 controls, human evidence required)
+1. **compliance.scan_repo** — Runs gitleaks + npm audit + checkov + built-in PII/PHI detector (in-process, `pii-scanner.ts`), normalizes findings, produces manifest. Supports `framework: 'soc2' | 'hipaa'` (default soc2). SOC2: "Scanner Reach" on 20 controls. HIPAA: dual metrics — technical reach on 164.312 (12 controls) + 164.308 admin placeholders (7 controls, human evidence required)
 2. **compliance.generate_audit_packet** — Writes structured audit-support packet (index.md + findings.json + coverage + roi + manifest + evidence/)
 3. **compliance.plan_remediation** — Deterministic prioritized steps w/ effort estimates
 4. **compliance.create_tickets** — Targets github + jira. Always dry-run first → planId → pending approval artifact. Execute requires approvedPlanId + planHash match, supports dedupe markers, reopenClosed, labelPolicy, rate limit backoff
@@ -47,6 +47,7 @@ Compliance Navigator is a standalone MCP server: `src/compliance-bridge/server.t
 - "HIPAA Security Rule Scanner Reach: 164.312 Technical Safeguards" — never "HIPAA compliant"
 - HIPAA technical reach % denominator is "scannable controls only" (11 of 12 technical controls that have scanner mappings). 164.312(a)(2)(ii) Emergency Access Procedure requires human evidence and is excluded from the denominator but listed as a permanent gap in controlDetails. This means 100% full-scanner-pack reach is achievable. Administrative placeholders (164.308, 7 controls) shown separately as "requires human evidence" — never mixed into headline %
 - "Est. Hours Saved (NOT VALIDATED)" with documented ranges
+- PII detector: "detects structured identifiers" — never "finds all PII"; names/addresses are documented gaps
 - "hash-chained log + verifier" not "tamper-proof"
 - "structured audit-support packet" not "audit-grade guarantee"
 - Dashboard payload-copy is a design choice, not a protocol limitation
@@ -76,7 +77,7 @@ Every code change must pass 3 parallel subagent reviews before commit:
 1. ~~**ZIP export**~~ — SHIPPED in v0.7.0
 2. ~~**GitHub Action wrapper**~~ — SHIPPED in v0.8.0 (`scripts/run-compliance.mjs` + `.github/workflows/compliance.yml`)
 3. ~~**HIPAA Security Rule mapping**~~ — SHIPPED in v0.9.0 (`hipaa-map.ts` + `coverage-shared.ts`, 12 technical controls + 7 admin placeholders, dual reach metrics, 99-assertion E2E suite)
-4. **PHI/PII detector** — new scanner (Presidio or similar) alongside gitleaks/npm-audit/checkov. Next target.
+4. ~~**PHI/PII detector**~~ — SHIPPED in v0.10.0 (`pii-scanner.ts`, native TypeScript — NOT Presidio; zero new deps, in-process, no shell). SSN/card/email + context-gated phone/DOB/MRN, validator-backed (Luhn, SSN structural rules), redaction guarantee (raw values never appear in findings/evidence/packets/ZIPs). SOC2: C1.1/C1.2/P6.1. HIPAA: 164.312(a)(1), (a)(2)(iv). Scope limit: no free-text names/addresses (would require NER — a future Presidio-backed optional enhancement remains possible). 76-assertion unit suite + E2E now 124 assertions.
 
 ## ARCHITECTURE
 
@@ -102,6 +103,7 @@ All bridges are standalone MCP servers using StdioServerTransport.
 - `src/compliance-bridge/demo-fixture.ts` — Demo repo generator
 - `src/compliance-bridge/zip-export.ts` — ZIP export with SHA-256 integrity hash
 - `src/compliance-bridge/ticket-writer.ts` — GitHub Issues + Jira integration
+- `src/compliance-bridge/pii-scanner.ts` — Built-in PII/PHI detector (4th scanner, in-process, redacting)
 - `src/compliance-bridge/normalizers/` — Scanner output parsers (gitleaks, npm-audit, checkov)
 - `src/compliance-bridge/soc2-map.ts` — 20-control SOC2 mapping (delegates to coverage-shared.ts)
 - `src/compliance-bridge/hipaa-map.ts` — 19 HIPAA controls (12 technical + 7 admin placeholders)
@@ -114,4 +116,5 @@ All bridges are standalone MCP servers using StdioServerTransport.
 - `.github/workflows/ci.yml` — CI: build + smoke test (9 tools + resources)
 - `.github/workflows/compliance.yml` — GitHub Action: scan + export + upload artifact + optional tickets
 - `scripts/run-compliance.mjs` — CI runner script (JSON-RPC stdio, --fail-on, JSON summary output)
-- `scripts/test-fixture-e2e.mjs` — 99-assertion E2E suite (real execution, no mocks; SOC2 + HIPAA coverage)
+- `scripts/test-fixture-e2e.mjs` — 124-assertion E2E suite (real execution, no mocks; SOC2 + HIPAA + PII coverage)
+- `scripts/test-pii-unit.mjs` — 76-assertion adversarial unit suite for the PII detector

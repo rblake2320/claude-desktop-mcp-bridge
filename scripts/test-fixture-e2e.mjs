@@ -64,7 +64,7 @@ async function rpc(proc, method, params, timeoutMs = 30000) {
 }
 
 async function main() {
-  console.log("\n=== Compliance Navigator v0.9.0 — Fixture E2E Test ===\n");
+  console.log("\n=== Compliance Navigator v0.10.0 — Fixture E2E Test ===\n");
   console.log("Server:", SERVER);
   console.log("Fixture dir:", FIXTURE_DIR);
   console.log();
@@ -115,7 +115,8 @@ async function main() {
   assert(typeof fixtureText === "string", "Response has text content");
   const fixture = JSON.parse(fixtureText);
   assert(fixture.outputDir === FIXTURE_DIR, `outputDir matches: ${fixture.outputDir}`);
-  assert(fixture.filesCreated.length === 8, `8 files created: ${fixture.filesCreated.length}`);
+  assert(fixture.filesCreated.length === 9, `9 files created: ${fixture.filesCreated.length}`);
+  assert(Array.isArray(fixture.scannerTargets?.pii) && fixture.scannerTargets.pii.length > 0, "scannerTargets includes pii");
   console.log();
 
   // ── Test 4: Verify fixture files exist on disk ──
@@ -123,6 +124,7 @@ async function main() {
   const expectedFiles = [
     "README.md", ".gitignore", ".gitleaks.toml", "config.env",
     ".env.example", "package.json", "infra/main.tf", "infra/Dockerfile",
+    "data/pii_sample.csv",
   ];
   for (const f of expectedFiles) {
     const full = path.join(FIXTURE_DIR, f);
@@ -143,6 +145,10 @@ async function main() {
 
   const pkgJson = JSON.parse(fs.readFileSync(path.join(FIXTURE_DIR, "package.json"), "utf-8"));
   assert(pkgJson.dependencies?.lodash === "4.17.20", "package.json has vulnerable lodash");
+
+  const piiSample = fs.readFileSync(path.join(FIXTURE_DIR, "data", "pii_sample.csv"), "utf-8");
+  assert(piiSample.includes("TEST ONLY"), "pii_sample.csv has TEST ONLY marker");
+  assert(piiSample.includes("078-05-1120"), "pii_sample.csv has sample SSN");
   console.log();
 
   // ── Test 6: Dashboard HTML contains cn-dashboard and v0.7.0 ──
@@ -153,7 +159,8 @@ async function main() {
   assert(!readResp.error, `No error: ${JSON.stringify(readResp.error)}`);
   const html = readResp.result?.contents?.[0]?.text || "";
   assert(html.includes("cn-dashboard"), "HTML has cn-dashboard");
-  assert(html.includes("0.9.0"), "HTML has v0.9.0");
+  assert(html.includes("0.10.0"), "HTML has v0.10.0");
+  assert(html.includes("PII detector"), "HTML mentions PII detector in workflow step");
   assert(html.includes("Create Demo Repo"), "HTML has 'Create Demo Repo' button");
   assert(html.includes("Content-Security-Policy"), "HTML has CSP meta tag");
   console.log();
@@ -209,6 +216,30 @@ async function main() {
   const scanResult = JSON.parse(scanText);
   assert(typeof scanResult.runId === "string", `scan_repo returned runId: ${scanResult.runId}`);
   assert(Array.isArray(scanResult.findings), "scan_repo returned findings array");
+  console.log();
+
+  // ── Test 10b: built-in PII detector findings ──
+  console.log("Test 10b: PII detector on fixture");
+  const piiStatus = (scanResult.scannerStatuses || []).find(s => s.scanner === "pii");
+  assert(piiStatus?.status === "ok", `pii scanner status ok: ${JSON.stringify(piiStatus)}`);
+  assert(piiStatus?.version === "builtin@0.10.0", `pii scanner version: ${piiStatus?.version}`);
+  const piiFindings = scanResult.findings.filter(f => f.scanner === "pii");
+  // The fixture data line contains exactly: 1 SSN, 1 card, 1 email, 1 phone, 1 DOB, 1 MRN
+  assert(piiFindings.length === 6, `exactly 6 pii findings on fixture (got ${piiFindings.length}: ${piiFindings.map(f => f.tags?.at(-1)).join(",")})`);
+  assert(scanResult.countsByScanner.pii === 6, `countsByScanner.pii === 6 (got ${scanResult.countsByScanner.pii})`);
+  // Redaction: raw values never appear anywhere in the scan response
+  assert(!scanText.includes("078-05-1120"), "raw SSN NOT in scan response (redaction)");
+  assert(!scanText.includes("4111111111111111"), "raw card number NOT in scan response (redaction)");
+  assert(scanText.includes("***-**-1120"), "masked SSN present in scan response");
+  // SOC2 annotation
+  const piiWithSoc2 = piiFindings.find(f => f.soc2?.controls?.includes("C1.1"));
+  assert(piiWithSoc2 != null, "pii finding mapped to SOC2 C1.1");
+  // Evidence artifact exists and is also redacted
+  const piiEvidencePath = path.join(scanResult.evidenceDir, "pii.json");
+  assert(fs.existsSync(piiEvidencePath), "pii.json evidence artifact exists");
+  const piiEvidence = fs.readFileSync(piiEvidencePath, "utf-8");
+  assert(!piiEvidence.includes("078-05-1120"), "raw SSN NOT in pii.json evidence (redaction)");
+  assert(JSON.parse(piiEvidence).stats?.filesScanned > 0, "pii.json evidence has scan stats");
   console.log();
 
   // ── Test 11: generate_audit_packet ──
@@ -322,7 +353,7 @@ async function main() {
   });
   assert(!hipaaFixtureResp.error, `HIPAA fixture no error: ${JSON.stringify(hipaaFixtureResp.error)}`);
   const hipaaFixture = JSON.parse(hipaaFixtureResp.result?.content?.[0]?.text);
-  assert(hipaaFixture.filesCreated.length === 8, `HIPAA fixture: 8 files created`);
+  assert(hipaaFixture.filesCreated.length === 9, `HIPAA fixture: 9 files created (got ${hipaaFixture.filesCreated.length})`);
 
   // Verify HIPAA README content
   const hipaaReadme = fs.readFileSync(path.join(HIPAA_FIXTURE_DIR, "README.md"), "utf-8");
@@ -365,6 +396,14 @@ async function main() {
     assert(firstWithHipaa?.soc2 == null, "HIPAA finding does NOT have .soc2 property");
     assert(Array.isArray(firstWithHipaa?.hipaa?.controls), "HIPAA finding has controls array");
   }
+
+  // PII findings map to HIPAA technical safeguards, redacted
+  const hipaaPii = hipaaScan.findings.filter(f => f.scanner === "pii");
+  assert(hipaaPii.length === 6, `HIPAA fixture: 6 pii findings (got ${hipaaPii.length})`);
+  const piiAccessControl = hipaaPii.find(f => f.hipaa?.controls?.includes("164.312(a)(1)"));
+  assert(piiAccessControl != null, "pii finding mapped to HIPAA 164.312(a)(1) Access Control");
+  const hipaaScanText = JSON.stringify(hipaaScan);
+  assert(!hipaaScanText.includes("078-05-1120"), "raw SSN NOT in HIPAA scan response (redaction)");
   console.log();
 
   // ── Test 18: HIPAA audit packet ──

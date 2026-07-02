@@ -51,6 +51,7 @@ export const HIPAA_TECHNICAL_CONTROLS: HIPAAControl[] = [
     scannerMappings: [
       { scanner: 'gitleaks', confidence: 0.8 },
       { scanner: 'checkov', confidence: 0.7 },
+      { scanner: 'pii', confidence: 0.8 },
     ],
   },
   {
@@ -93,6 +94,7 @@ export const HIPAA_TECHNICAL_CONTROLS: HIPAAControl[] = [
     requiresHumanEvidence: false,
     scannerMappings: [
       { scanner: 'checkov', confidence: 0.7 },
+      { scanner: 'pii', confidence: 0.7 },
     ],
   },
   {
@@ -252,6 +254,7 @@ const SCANNER_RATIONALE: Record<ScannerId, string> = {
   gitleaks: 'Exposed credentials in code threaten ePHI access controls and authentication safeguards.',
   npm_audit: 'Vulnerable dependencies can be exploited to compromise ePHI integrity and confidentiality.',
   checkov: 'Infrastructure misconfigurations weaken technical safeguards protecting ePHI.',
+  pii: 'PII/PHI stored in source control is ePHI outside access-control and encryption safeguards.',
 };
 
 // ── Mapping Logic ────────────────────────────────────────────────

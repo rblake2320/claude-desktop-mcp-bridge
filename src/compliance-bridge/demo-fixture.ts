@@ -2,7 +2,8 @@
  * Demo Fixture Generator
  *
  * Creates a small self-contained repo with intentional compliance findings
- * that all 3 scanners (gitleaks, npm audit, checkov) will detect.
+ * that all 4 scanners (gitleaks, npm audit, checkov, built-in PII detector)
+ * will detect.
  *
  * Purpose: let users try the full compliance workflow end-to-end without
  * touching real code. Every finding is intentional and clearly marked.
@@ -26,6 +27,7 @@ export interface CreateDemoFixtureResponse {
     gitleaks: string[];
     npm_audit: string[];
     checkov: string[];
+    pii: string[];
   };
   message: string;
 }
@@ -59,9 +61,11 @@ test the full Compliance Navigator workflow:
 | checkov     | S3 bucket without versioning         | medium   |
 | checkov     | S3 bucket without logging            | low      |
 | checkov     | Security group allowing 0.0.0.0/0    | high     |
+| pii (built-in) | Fake SSN / card / email / phone / DOB / MRN in data/pii_sample.csv | varies |
 
 All secrets are fake test values that follow known patterns scanners detect.
-They are not real credentials.
+They are not real credentials. All PII is fictional (well-known published
+test values: the Woolworth sample SSN and the standard Visa test card).
 `;
 
 const FIXTURE_GITIGNORE = `# Compliance Navigator demo repo
@@ -194,6 +198,16 @@ EXPOSE 8080
 CMD ["echo", "This is a demo fixture - do not run"]
 `;
 
+// Fake PII sample for the built-in PII detector.
+// Every value is fictional: 078-05-1120 is the famous Woolworth sample SSN,
+// 4111 1111 1111 1111 is the standard Visa test number, 555-01XX-style phone,
+// and the person does not exist.
+const FIXTURE_PII_SAMPLE = `# TEST ONLY - FAKE PII FOR SCANNER TESTING - no real persons
+# This file exists to trigger the built-in PII/PHI detector.
+name,contact,identifiers
+Jane Demo,jane.demo@clinic-demo.org Phone: (555) 867-5309,SSN 078-05-1120 DOB: 1987-04-12 MRN: 4587321 card 4111111111111111
+`;
+
 // Gitleaks config to exclude the .compliance/ output dir
 const FIXTURE_GITLEAKS_TOML = `title = "Compliance Navigator Demo - gitleaks config"
 
@@ -230,6 +244,7 @@ to test the HIPAA Security Rule mapping workflow:
 
 This fixture produces findings mapped to **164.312 Technical Safeguards**:
 - Access Control (164.312(a)(1))
+- Encryption and Decryption (164.312(a)(2)(iv))
 - Audit Controls (164.312(b))
 - Integrity (164.312(c)(1))
 - Transmission Security (164.312(e)(1))
@@ -237,7 +252,11 @@ This fixture produces findings mapped to **164.312 Technical Safeguards**:
 
 **164.308 Administrative Safeguards** are listed as placeholders requiring human evidence.
 
-All secrets are fake test values. All IaC configs are marked DO-NOT-DEPLOY.
+The \`data/pii_sample.csv\` file contains fictional PHI-style identifiers
+(sample SSN, test card number, fake MRN/DOB) that trigger the built-in
+PII/PHI detector. No real persons.
+
+All secrets and PII are fake test values. All IaC configs are marked DO-NOT-DEPLOY.
 `;
 
 function getHipaaDemoFiles(): FileEntry[] {
@@ -250,6 +269,7 @@ function getHipaaDemoFiles(): FileEntry[] {
     { relativePath: 'package.json', content: FIXTURE_PACKAGE_JSON },
     { relativePath: 'infra/main.tf', content: FIXTURE_MAIN_TF },
     { relativePath: 'infra/Dockerfile', content: FIXTURE_DOCKERFILE },
+    { relativePath: 'data/pii_sample.csv', content: FIXTURE_PII_SAMPLE },
   ];
 }
 
@@ -263,6 +283,7 @@ function getSoc2DemoFiles(): FileEntry[] {
     { relativePath: 'package.json', content: FIXTURE_PACKAGE_JSON },
     { relativePath: 'infra/main.tf', content: FIXTURE_MAIN_TF },
     { relativePath: 'infra/Dockerfile', content: FIXTURE_DOCKERFILE },
+    { relativePath: 'data/pii_sample.csv', content: FIXTURE_PII_SAMPLE },
   ];
 }
 
@@ -326,17 +347,18 @@ export function createDemoFixture(input: CreateDemoFixtureInput): CreateDemoFixt
       gitleaks: ['config.env', '.env.example'],
       npm_audit: ['package.json'],
       checkov: ['infra/main.tf', 'infra/Dockerfile'],
+      pii: ['data/pii_sample.csv'],
     },
     message: [
       `Demo fixture created at: ${outputDir}`,
       '',
-      `${filesCreated.length} files written with intentional findings for all 3 scanners.`,
+      `${filesCreated.length} files written with intentional findings for all 4 scanners.`,
       '',
       'Next steps:',
       `  1. compliance.scan_repo({ repoPath: "${outputDir.replace(/\\/g, '\\\\')}" })`,
       `  2. compliance.open_dashboard({ repoPath: "${outputDir.replace(/\\/g, '\\\\')}" })`,
       '',
-      'All secrets are fake test values. All IaC configs are marked DO-NOT-DEPLOY.',
+      'All secrets and PII are fake test values. All IaC configs are marked DO-NOT-DEPLOY.',
     ].join('\n'),
   };
 }

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "sessionId": "bc65529d-444b-4508-85ee-1f123a68cebd",
+  "sessionStarted": "2026-07-02T01:16:37.490Z",
+  "namespaces": {},
+  "skillUsage": [],
+  "bridgeHealth": {
+    "skills-bridge": {
+      "bridgeName": "skills-bridge",
+      "status": "healthy",
+      "lastCheck": "2026-06-20T16:25:24.747Z",
+      "details": "Healthcheck passed",
+      "uptime": 11177353
+    }
+  },
+  "tasks": []
+}

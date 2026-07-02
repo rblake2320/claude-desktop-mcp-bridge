@@ -49,7 +49,7 @@ function getControlsForScanners(
  * Returns three coverage metrics:
  *   - coveragePct: "scanner reach" -- controls where at least one finding was detected.
  *   - coveragePctPotential: controls addressable by installed scanners (even with 0 findings).
- *   - coveragePctFull: controls addressable when ALL 3 scanners are installed.
+ *   - coveragePctFull: controls addressable when ALL scanners are available.
  *
  * IMPORTANT: These metrics measure scanner reach, not compliance status.
  */
@@ -73,8 +73,9 @@ export function computeCoverageForControls(
     : [];
   const potentialIds = getControlsForScanners(controls, activeScanners);
 
-  // Full: controls reachable when all 3 scanners are available
-  const allScanners: ScannerId[] = ['gitleaks', 'npm_audit', 'checkov'];
+  // Full: controls reachable when all scanners are available
+  // (3 external tools + the built-in PII detector, which is always present)
+  const allScanners: ScannerId[] = ['gitleaks', 'npm_audit', 'checkov', 'pii'];
   const fullIds = getControlsForScanners(controls, allScanners);
 
   const controlDetails = controls.map(control => ({

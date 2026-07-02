@@ -3,6 +3,23 @@
 All notable changes to this project will be documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioned per [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-07-01
+
+### Added
+- **Built-in PII/PHI detector** (`pii` scanner) runs in-process alongside gitleaks/npm audit/checkov — no external binary, no shell execution, no new dependencies
+- Detects: SSNs (structural validation), payment cards (Luhn + issuer IIN check), email addresses, and context-gated US phone numbers, dates of birth, and medical record numbers
+- **Redaction**: findings, evidence artifacts (`pii.json`), audit packets, and ZIP exports never contain the raw matched value. Masks: SSN/card keep last 4 (`***-**-1120`), MRN and DOB fully masked, email keeps first char + TLD only (`j***@***.org`). Masked forms are partial by definition — treat audit packets as sensitive documents
+- SOC2 mappings: C1.1 (0.9), C1.2 (0.6), P6.1 (0.8). HIPAA mappings: 164.312(a)(1) (0.8), 164.312(a)(2)(iv) (0.7)
+- Demo fixture presets now include `data/pii_sample.csv` with fictional test identifiers (9 files, was 8)
+- Adversarial unit suite `scripts/test-pii-unit.mjs` (76 assertions: validators, context gating, redaction, binary/oversize/symlink/lock-file skipping, deadline, caps, determinism, unreadable files)
+- E2E suite extended to 124 assertions (was 99)
+
+### Scanner limits (reported in scanner status, never silent)
+- 1 MiB per file, 50k files, 25 findings per rule per file, 10k-char lines skipped, symlinks never followed; partial scans (deadline/file-limit) surface as scanner status `error` with counts
+
+### Known scope limits
+- Free-text person names and postal addresses are NOT detected (requires NER); undashed SSNs, phones, DOBs, MRNs require a context keyword on the same line
+
 ## [0.7.0] - 2026-02-12
 
 ### Added

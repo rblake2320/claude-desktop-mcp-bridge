@@ -31,11 +31,16 @@ import type { NormalizedFinding, ScannerId, ROIResult } from './contracts.js';
 const HOURS_PER_SECRET = 0.75;
 const HOURS_PER_VULN = 0.25;
 const HOURS_PER_IAC = 0.5;
+//   - PII/PHI exposure (0.5h): assumes triage, removal or replacement with
+//     placeholder data, verification. Real-world range: 0.1h (delete a test
+//     fixture) to 8h+ (git history scrub + breach-notification assessment).
+const HOURS_PER_PII = 0.5;
 
 const SCANNER_HOURS: Record<ScannerId, number> = {
   gitleaks: HOURS_PER_SECRET,
   npm_audit: HOURS_PER_VULN,
   checkov: HOURS_PER_IAC,
+  pii: HOURS_PER_PII,
 };
 
 const CONSERVATIVE_MULTIPLIER = 1.0;
@@ -45,7 +50,7 @@ const BASIS =
   'ESTIMATE ONLY (not validated against real data). ' +
   'Conservative: triage+remediation using default per-finding estimates. ' +
   'Likely: 1.8x multiplier for context switching, code review, and deployment. ' +
-  'Adjust HOURS_PER_SECRET/VULN/IAC constants for your team\'s actual remediation times.';
+  'Adjust HOURS_PER_SECRET/VULN/IAC/PII constants for your team\'s actual remediation times.';
 
 /**
  * Calculate estimated ROI in hours saved.
@@ -58,6 +63,7 @@ export function calculateROI(findings: NormalizedFinding[]): ROIResult {
     gitleaks: 0,
     npm_audit: 0,
     checkov: 0,
+    pii: 0,
   };
 
   for (const finding of findings) {

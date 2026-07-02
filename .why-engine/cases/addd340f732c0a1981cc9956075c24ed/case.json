@@ -1,0 +1,45 @@
+{
+  "caseId": "addd340f732c0a1981cc9956075c24ed",
+  "idempotencyKey": "addd340f732c0a1981cc9956075c24ed81b9a8a7f6e9bc2db39f92c071116ebf",
+  "createdAt": "2026-02-12T22:46:36.155Z",
+  "repoPath": "C:\\Users\\techai\\claude-desktop-mcp-bridge",
+  "evidenceId": "45f96506ca450f7c817aed71",
+  "title": "Secret gating test v2 2026-02-12T16:46:36",
+  "rootCause": "Injected fake token into test output v2",
+  "whyNotCaught": "This is a synthetic test",
+  "whyFixWorked": "N/A",
+  "preventNextTime": "Ensure secrets are scrubbed before publish",
+  "evidence": {
+    "commitRange": "HEAD~1..HEAD",
+    "diffSummary": "CLAUDE.md                                |  4 ++--\n scripts/test-fixture-e2e.mjs             | 25 +++++++++++++++++++++++++\n src/compliance-bridge/coverage-shared.ts |  7 ++++++-\n src/compliance-bridge/hipaa-map.ts       | 24 +++++++++++++++++++++++-\n 4 files changed, 56 insertions(+), 4 deletions(-)",
+    "commitMessages": [
+      "v0.9.0 pre-push hardening: scannable-only denominator, defensive coverage filter, negative assertions"
+    ],
+    "fileList": [
+      "CLAUDE.md",
+      "scripts/test-fixture-e2e.mjs",
+      "src/compliance-bridge/coverage-shared.ts",
+      "src/compliance-bridge/hipaa-map.ts"
+    ],
+    "testOutputSnippet": "AWS_KEY=[REDACTED:aws-access-key]"
+  },
+  "tags": [],
+  "sensitivity": "internal",
+  "secretScanResult": {
+    "clean": true,
+    "secretsFound": 0,
+    "redactionsApplied": 0,
+    "findings": [],
+    "gitleaksRan": true,
+    "gitleaksFindings": 0,
+    "gitleaksSummary": {
+      "count": 0,
+      "rules": [],
+      "files": [],
+      "fingerprints": [],
+      "allowlistedCount": 0,
+      "unallowlistedCount": 0
+    }
+  },
+  "links": {}
+}

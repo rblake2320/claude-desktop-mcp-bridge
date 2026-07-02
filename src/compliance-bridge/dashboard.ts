@@ -367,7 +367,7 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
         <div class="step" id="step-1">
           <div class="step-num" id="step-num-1">1</div>
           <strong>Scan Repo</strong>
-          <span class="step-label">gitleaks + npm audit + checkov</span>
+          <span class="step-label">gitleaks + npm audit + checkov + PII detector</span>
           <button class="btn btn-primary" id="btn-scan" onclick="runAction('scan')">Run Scan</button>
         </div>
         <div class="step" id="step-2">
@@ -406,7 +406,7 @@ export function generateDashboardHtml(opts: DashboardOptions): string {
     <div class="card">
       <div class="card-title">Quick Start</div>
       <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:10px">
-        No repo to scan? Generate a demo repo with intentional findings for all 3 scanners.
+        No repo to scan? Generate a demo repo with intentional findings for all 4 scanners.
       </div>
       <div class="btn-row">
         <button class="btn btn-primary" id="btn-demo-fixture" onclick="runAction('demo-fixture')">Create Demo Repo</button>

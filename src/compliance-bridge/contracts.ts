@@ -13,7 +13,7 @@ export type Mode = 'report-only' | 'generate-remediation';
 
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
-export type ScannerId = 'gitleaks' | 'npm_audit' | 'checkov';
+export type ScannerId = 'gitleaks' | 'npm_audit' | 'checkov' | 'pii';
 
 export type RiskTier = 'low' | 'medium' | 'high';
 
@@ -133,7 +133,7 @@ export interface CoverageResult {
   coveragePct: number;            // 0..100
   /** Potential reach: controls addressable by installed scanners (even with 0 findings) */
   coveragePctPotential: number;   // 0..100
-  /** Full reach: controls addressable when all 3 scanners are installed */
+  /** Full reach: controls addressable when all scanners are available (3 external + built-in PII detector) */
   coveragePctFull: number;        // 0..100
   coveredControlsPotential: string[];
   controlDetails: Array<{
